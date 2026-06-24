@@ -1606,6 +1606,178 @@
   color: var(--color-danger-600);
 }
 
+/* ── Amortização ── */
+.inv-amort-toggle-row {
+  margin: var(--space-4) 0 var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-md);
+}
+
+.inv-amort-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-gray-700);
+}
+
+.inv-amort-toggle-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary-600);
+  cursor: pointer;
+}
+
+.inv-amort-box {
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.inv-amort-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.inv-amort-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  border: 1px solid transparent;
+}
+
+.inv-amort-row.past {
+  opacity: 0.5;
+  background: var(--color-gray-50);
+}
+
+.inv-amort-row.this-month {
+  background: #FEF9C3;
+  border-color: #FDE047;
+  font-weight: var(--font-weight-semibold);
+}
+
+.inv-amort-row.future {
+  background: white;
+  border-color: var(--color-gray-100);
+}
+
+.inv-amort-index {
+  font-size: 10px;
+  color: var(--color-gray-400);
+  min-width: 24px;
+  text-align: center;
+}
+
+.inv-amort-date { flex: 1; color: var(--color-gray-700); }
+.inv-amort-amount { font-weight: var(--font-weight-semibold); color: var(--color-success-600); }
+.inv-amort-balance { color: var(--color-gray-400); font-size: var(--font-size-xs); }
+
+.inv-amort-title-block {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-gray-100);
+}
+
+.inv-amort-title-block:last-child {
+  border-bottom: none;
+}
+
+.inv-amort-title-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.inv-amort-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #FDE047;
+  color: #713F12;
+  white-space: nowrap;
+}
+
+/* ── Barra de taxas BCB ── */
+.inv-rates-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  background: linear-gradient(135deg, #EFF6FF 0%, #F0FDF4 100%);
+  border: 1px solid #BFDBFE;
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.inv-rates-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-gray-700);
+  white-space: nowrap;
+}
+
+.inv-rates-list {
+  display: flex;
+  gap: var(--space-4);
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.inv-rate-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.inv-rate-label {
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.inv-rate-value {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: #1D4ED8;
+}
+
+.inv-rates-badge {
+  font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.inv-rates-badge.ok {
+  background: #DCFCE7;
+  color: #15803D;
+}
+
+.inv-rates-badge.stale {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
 .btn-redeem {
   display: inline-flex;
   align-items: center;

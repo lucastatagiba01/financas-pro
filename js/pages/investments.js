@@ -3,6 +3,7 @@
 // ============================================
 
 import { formatCurrency, formatDate, escapeHtml, icons } from '../utils.js';
+import { getRates, calcCurrentValueRF, calcReturn, formatRateLabel, daysSince } from '../services/rates.js';
 import {
   getInvestmentsRF, addInvestmentRF, deleteInvestmentRF,
   getInvestmentsRV, addInvestmentRV, deleteInvestmentRV,
@@ -15,6 +16,7 @@ import { showToast } from '../components/toast.js';
 import { openModal, closeModal } from '../components/modal.js';
 
 let _tabChangeHandler = null;
+let _rates = null; // cache das taxas BCB
 let _rfSearch = '';
 let _rfSort = 'maturity_asc';
 let _rvSearch = '';
@@ -66,7 +68,7 @@ export function renderInvestments() {
   document.addEventListener('inv-tab-change', _tabChangeHandler);
 }
 
-function renderTabContent(tab) {
+async function renderTabContent(tab) {
   destroyAllCharts();
   sessionStorage.setItem('invActiveTab', tab);
   const rf = getInvestmentsRF();
@@ -75,17 +77,24 @@ function renderTabContent(tab) {
   const container = document.getElementById('inv-content');
   if (!container) return;
 
+  // Busca taxas (usa cache se disponível, busca do BC se necessário)
+  if (!_rates) {
+    container.innerHTML = `<div style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">Buscando taxas do Banco Central...</div>`;
+    _rates = await getRates();
+  }
+  const rates = _rates;
+
   switch (tab) {
     case 'carteira':
-      container.innerHTML = renderCarteiraTab(rf, rv, redemptions);
+      container.innerHTML = renderCarteiraTab(rf, rv, redemptions, rates);
       buildCarteiraCharts(rf, rv, redemptions);
       bindCarteiraFilterEvents(rf, rv, redemptions);
       break;
     case 'rf':
-      container.innerHTML = renderRendaFixaTab(rf, redemptions);
+      container.innerHTML = renderRendaFixaTab(rf, redemptions, rates);
       buildRFChart(rf);
       bindRFDeleteEvents();
-      bindRFFilterEvents(rf, redemptions);
+      bindRFFilterEvents(rf, redemptions, rates);
       break;
     case 'rv':
       container.innerHTML = renderRendaVariavelTab(rv, redemptions);
@@ -102,11 +111,72 @@ function renderTabContent(tab) {
 
 // ── Helpers de resgate ──
 
+// Frequência → meses entre parcelas
+const AMORT_FREQ_MONTHS = {
+  monthly: 1, bimonthly: 2, quarterly: 3, semiannual: 6, annual: 12,
+};
+
+/**
+ * Calcula o cronograma completo de amortizações de um título.
+ * Retorna array de { date, amount, index, isPast, isThisMonth }
+ */
+function getAmortizationSchedule(inv) {
+  const a = inv.amortization;
+  if (!a || !a.firstDate || !a.value) return [];
+
+  const freqMonths = AMORT_FREQ_MONTHS[a.frequency] || 6;
+  const maturity   = new Date(inv.maturityDate + 'T00:00:00');
+  const schedule   = [];
+  let   current    = new Date(a.firstDate + 'T00:00:00');
+  let   balance    = inv.value;
+  let   index      = 0;
+  const today      = new Date(); today.setHours(0,0,0,0);
+  const thisMonth  = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+
+  while (current <= maturity && balance > 0.01 && index < 240) {
+    const amount = a.type === 'percentage'
+      ? balance * (a.value / 100)
+      : Math.min(a.value, balance);
+
+    const dateStr = current.toISOString().split('T')[0];
+    const dMonth  = `${current.getFullYear()}-${String(current.getMonth()+1).padStart(2,'0')}`;
+
+    schedule.push({
+      index,
+      date:        dateStr,
+      amount,
+      balance:     balance - amount,
+      isPast:      current < today,
+      isToday:     current.getTime() === today.getTime(),
+      isThisMonth: dMonth === thisMonth,
+    });
+
+    balance -= amount;
+
+    // Avança para próxima data
+    const next = new Date(current);
+    next.setMonth(next.getMonth() + freqMonths);
+    current = next;
+    index++;
+  }
+
+  return schedule;
+}
+
+// Saldo do principal após amortizações automáticas já ocorridas
+function principalAfterAmortizations(inv) {
+  if (!inv.amortization || !inv.amortization.firstDate) return inv.value;
+  const schedule = getAmortizationSchedule(inv);
+  const pastAmort = schedule.filter(p => p.isPast).reduce((s, p) => s + p.amount, 0);
+  return Math.max(0, inv.value - pastAmort);
+}
+
 function netValue(inv, redemptions) {
-  const redeemed = redemptions
+  const principal = principalAfterAmortizations(inv);
+  const redeemed  = redemptions
     .filter(r => r.investmentId === inv.id)
     .reduce((s, r) => s + r.amount, 0);
-  return Math.max(0, inv.value - redeemed);
+  return Math.max(0, principal - redeemed);
 }
 
 function totalRedeemed(inv, redemptions) {
@@ -151,6 +221,15 @@ function renderCarteiraTab(rf, rv, redemptions) {
     const d = new Date(i.maturityDate + 'T00:00:00');
     return d >= today && d <= in7 && netValue(i, redemptions) > 0;
   }).sort((a, b) => a.maturityDate.localeCompare(b.maturityDate));
+
+  // Amortizações deste mês
+  const amortizandoMes = rf
+    .filter(i => i.amortization && netValue(i, redemptions) > 0)
+    .flatMap(i => getAmortizationSchedule(i)
+      .filter(p => p.isThisMonth)
+      .map(p => ({ ...p, invName: i.name, invId: i.id }))
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   // Posições consolidadas: RF + RV juntos com valores líquidos
   const posicoes = [
@@ -220,6 +299,31 @@ function renderCarteiraTab(rf, rv, redemptions) {
               </div>
             `;
           }).join('')}
+        </div>
+      </div>
+      ` : ''}
+
+      <!-- Amortizações deste mês -->
+      ${amortizandoMes.length > 0 ? `
+      <div class="inv-alert-card" style="border-color:#FDE047;background:#FEFCE8;">
+        <div class="inv-alert-header">
+          <span class="inv-alert-icon">💰</span>
+          <strong>Amortizações este mês</strong>
+          <span class="inv-alert-count" style="background:#FEF9C3;color:#713F12;">${amortizandoMes.length} parcela${amortizandoMes.length > 1 ? 's' : ''}</span>
+        </div>
+        <div class="inv-alert-list">
+          ${amortizandoMes.map(p => `
+            <div class="inv-alert-item">
+              <div>
+                <div class="inv-alert-name">${escapeHtml(p.invName)}</div>
+                <div class="inv-alert-sub">Parcela ${p.index + 1} · ${formatDate(p.date)}</div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-weight:var(--font-weight-semibold);color:var(--color-success-600);">+ ${formatCurrency(p.amount)}</div>
+                <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Saldo após: ${formatCurrency(p.balance)}</div>
+              </div>
+            </div>
+          `).join('')}
         </div>
       </div>
       ` : ''}
@@ -364,25 +468,82 @@ function applyRFFilters(rf) {
   return list;
 }
 
-function renderRendaFixaTab(rf, redemptions = []) {
-  const total = rf.reduce((s, i) => s + netValue(i, redemptions), 0);
+function renderRendaFixaTab(rf, redemptions = [], rates = {}) {
+  // Calcula totais usando valor ATUAL (com rendimentos)
+  const totalAplicado = rf.reduce((s, i) => s + netValue(i, redemptions), 0);
+  const totalAtual    = rf.reduce((s, i) => {
+    const nv = netValue(i, redemptions);
+    return s + calcCurrentValueRF(nv, i, rates);
+  }, 0);
+  const totalRendimento = totalAtual - totalAplicado;
+  const totalPct = totalAplicado > 0 ? (totalRendimento / totalAplicado) * 100 : 0;
+
   const pre    = rf.filter(i => i.returnType === 'pre').reduce((s, i) => s + netValue(i, redemptions), 0);
   const pos    = rf.filter(i => i.returnType === 'pos').reduce((s, i) => s + netValue(i, redemptions), 0);
   const hybrid = rf.filter(i => i.returnType === 'hybrid').reduce((s, i) => s + netValue(i, redemptions), 0);
   const filtered = applyRFFilters(rf);
 
+  // IPCA anualizado para exibição
+  const ipcaAnual = ((1 + (rates.ipca||0)/100)**12 - 1)*100;
+  // Badge de atualização das taxas
+  const ratesBadge = rates.stale
+    ? `<span class="inv-rates-badge stale">⚠️ Taxas desatualizadas — usando fallback</span>`
+    : `<span class="inv-rates-badge ok">✓ Atualizado hoje · ${rates.fetchedAt ? new Date(rates.fetchedAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) : ''}</span>`;
+
   return `
     <div class="animate-fade-in-up">
+
+      <!-- Barra de taxas do BC -->
+      <div class="inv-rates-bar">
+        <span class="inv-rates-title">📡 Banco Central</span>
+        <div class="inv-rates-list">
+          <div class="inv-rate-item">
+            <span class="inv-rate-label">CDI</span>
+            <span class="inv-rate-value">${(rates.cdi||0).toFixed(2)}% a.a.</span>
+            ${rates.cdiDaily ? `<span style="font-size:10px;color:var(--color-gray-400);">${rates.cdiDaily.toFixed(4)}%/dia</span>` : ''}
+          </div>
+          <div class="inv-rate-item">
+            <span class="inv-rate-label">SELIC</span>
+            <span class="inv-rate-value">${(rates.selic||0).toFixed(2)}% a.a.</span>
+          </div>
+          <div class="inv-rate-item">
+            <span class="inv-rate-label">IPCA</span>
+            <span class="inv-rate-value">${(rates.ipca||0).toFixed(2)}%/mês</span>
+            <span style="font-size:10px;color:var(--color-gray-400);">${ipcaAnual.toFixed(2)}% a.a.</span>
+          </div>
+        </div>
+        ${ratesBadge}
+      </div>
+
       <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
         <div class="stat-card">
           <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">🏦</div>
           <div class="stat-content">
-            <div class="stat-label">Total em Renda Fixa</div>
-            <div class="stat-value">${formatCurrency(total)}</div>
+            <div class="stat-label">Valor Aplicado</div>
+            <div class="stat-value">${formatCurrency(totalAplicado)}</div>
           </div>
         </div>
         <div class="stat-card stagger-1">
-          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">📄</div>
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">💰</div>
+          <div class="stat-content">
+            <div class="stat-label">Valor Atual</div>
+            <div class="stat-value">${formatCurrency(totalAtual)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-2">
+          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">📈</div>
+          <div class="stat-content">
+            <div class="stat-label">Rendimento Total</div>
+            <div class="stat-value" style="color:${totalRendimento >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+              ${totalRendimento >= 0 ? '+' : ''}${formatCurrency(totalRendimento)}
+            </div>
+            <div class="inv-pct-label" style="color:${totalPct >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+              ${totalPct >= 0 ? '+' : ''}${totalPct.toFixed(2)}% desde aplicação
+            </div>
+          </div>
+        </div>
+        <div class="stat-card stagger-3">
+          <div class="stat-icon" style="background:rgba(99,102,241,.1);color:#6366F1;">📄</div>
           <div class="stat-content">
             <div class="stat-label">Títulos</div>
             <div class="stat-value">${rf.length}</div>
@@ -398,7 +559,7 @@ function renderRendaFixaTab(rf, redemptions = []) {
           </div>
         </div>
         <div class="card">
-          <div class="card-header"><h3>Resumo</h3></div>
+          <div class="card-header"><h3>Resumo por Tipo</h3></div>
           <div class="inv-rf-legend">
             <div class="inv-rf-type-item">
               <span class="inv-geo-dot" style="background:#3B82F6;"></span>
@@ -444,42 +605,61 @@ function renderRendaFixaTab(rf, redemptions = []) {
             <thead>
               <tr>
                 <th>Nome</th>
-                <th>Valor</th>
-                <th>Aplicação</th>
+                <th>Aplicado</th>
+                <th>Valor Atual</th>
+                <th>Rendimento</th>
+                <th>Taxa</th>
+                <th>Dias</th>
                 <th>Vencimento</th>
-                <th>Rentabilidade</th>
-                <th>Local</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               ${filtered.map(inv => {
-                const nv = netValue(inv, redemptions);
+                const nv       = netValue(inv, redemptions);
+                const current  = calcCurrentValueRF(nv, inv, rates);
+                const { returnBRL, returnPct } = calcReturn(nv, current);
                 const redeemed = totalRedeemed(inv, redemptions);
-                const today2 = new Date(); today2.setHours(0,0,0,0);
+                const dias     = daysSince(inv.applicationDate);
+                const rateLabel = formatRateLabel(inv, rates);
+
+                const today2  = new Date(); today2.setHours(0,0,0,0);
                 const matDate = new Date(inv.maturityDate + 'T00:00:00');
                 const diffDays = Math.ceil((matDate - today2) / (1000*60*60*24));
-                const isNear = diffDays >= 0 && diffDays <= 7;
+                const isNear   = diffDays >= 0 && diffDays <= 7;
+
                 return `
                   <tr>
                     <td>
-                      <strong>${escapeHtml(inv.name)}</strong>
-                      ${redeemed > 0 ? `<div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Resgatado: ${formatCurrency(redeemed)}</div>` : ''}
+                      <div style="font-weight:var(--font-weight-medium);">${escapeHtml(inv.name)}</div>
+                      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;">
+                        <span class="inv-badge inv-badge-${inv.returnType}">${returnTypeLabel(inv)}</span>
+                        ${inv.amortization ? `<span class="inv-badge" style="background:#FEF9C3;color:#713F12;">Amortiza</span>` : ''}
+                      </div>
+                      ${redeemed > 0 ? `<div style="font-size:var(--font-size-xs);color:var(--color-danger-500);margin-top:2px;">Resgatado: ${formatCurrency(redeemed)}</div>` : ''}
+                    </td>
+                    <td style="color:var(--color-gray-600);">${formatCurrency(nv)}</td>
+                    <td>
+                      <strong style="color:var(--color-gray-800);">${formatCurrency(current)}</strong>
                     </td>
                     <td>
-                      <strong>${formatCurrency(nv)}</strong>
-                      ${redeemed > 0 ? `<div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Original: ${formatCurrency(inv.value)}</div>` : ''}
+                      <span style="color:${returnBRL >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};font-weight:var(--font-weight-semibold);">
+                        ${returnBRL >= 0 ? '+' : ''}${formatCurrency(returnBRL)}
+                      </span>
+                      <div style="font-size:var(--font-size-xs);color:${returnPct >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+                        ${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(2)}%
+                      </div>
                     </td>
-                    <td>${formatDate(inv.applicationDate)}</td>
+                    <td style="font-size:var(--font-size-xs);color:var(--color-gray-500);max-width:140px;">${rateLabel}</td>
+                    <td style="color:var(--color-gray-500);font-size:var(--font-size-sm);">${dias}d</td>
                     <td>
-                      ${formatDate(inv.maturityDate)}
+                      <div>${formatDate(inv.maturityDate)}</div>
                       ${isNear ? `<span class="inv-near-badge">⚠️ ${diffDays === 0 ? 'hoje' : diffDays + 'd'}</span>` : ''}
                     </td>
-                    <td><span class="inv-badge inv-badge-${inv.returnType}">${returnTypeLabel(inv)}</span></td>
-                    <td>${inv.geography === 'brasil' ? '🇧🇷 Brasil' : '🌎 Global'}</td>
-                    <td style="display:flex;gap:var(--space-1);">
-                      ${nv > 0 ? `<button class="btn-icon btn-redeem redeem-rf" data-id="${inv.id}" data-name="${escapeHtml(inv.name)}" data-net="${nv}" title="Resgatar">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="m16 6-4 4-4-4"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                    <td style="display:flex;gap:var(--space-1);align-items:center;">
+                      ${nv > 0 ? `<button class="btn-redeem redeem-rf" data-id="${inv.id}" data-name="${escapeHtml(inv.name)}" data-net="${nv}" title="Resgatar">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="m16 6-4 4-4-4"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                        Resgatar
                       </button>` : ''}
                       <button class="btn-icon btn-danger delete-rf" data-id="${inv.id}" title="Excluir">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
@@ -493,6 +673,76 @@ function renderRendaFixaTab(rf, redemptions = []) {
         </div>
         ` : `<div class="empty-state" style="padding:var(--space-6);">${rf.length > 0 ? 'Nenhum título encontrado para o filtro.' : 'Nenhum título cadastrado.'}</div>`}
       </div>
+
+      <!-- Cronograma de Amortizações -->
+      ${renderAmortizationCalendar(rf)}
+    </div>
+  `;
+}
+
+function renderAmortizationCalendar(rf) {
+  const titlesWithAmort = rf.filter(i => i.amortization && i.amortization.firstDate);
+  if (titlesWithAmort.length === 0) return '';
+
+  return `
+    <div class="card" style="margin-top:var(--space-5);">
+      <div class="card-header" style="border-bottom:1px solid var(--color-gray-100);">
+        <h3>📅 Cronograma de Amortizações</h3>
+        <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">
+          Projeção baseada nas regras cadastradas
+        </span>
+      </div>
+
+      ${titlesWithAmort.map(inv => {
+        const schedule = getAmortizationSchedule(inv);
+        if (schedule.length === 0) return '';
+
+        const freqLabel = {
+          monthly: 'Mensal', bimonthly: 'Bimestral', quarterly: 'Trimestral',
+          semiannual: 'Semestral', annual: 'Anual',
+        }[inv.amortization.frequency] || inv.amortization.frequency;
+
+        const typeLabel = inv.amortization.type === 'percentage'
+          ? `${inv.amortization.value}% do saldo`
+          : `${formatCurrency(inv.amortization.value)} fixo`;
+
+        const totalAmort    = schedule.reduce((s, p) => s + p.amount, 0);
+        const pastCount     = schedule.filter(p => p.isPast).length;
+        const nextUpcoming  = schedule.find(p => !p.isPast);
+
+        return `
+          <div class="inv-amort-title-block">
+            <div class="inv-amort-title-header">
+              <div>
+                <div style="font-weight:var(--font-weight-semibold);color:var(--color-gray-800);">
+                  ${escapeHtml(inv.name)}
+                </div>
+                <div style="font-size:var(--font-size-xs);color:var(--color-gray-500);margin-top:2px;">
+                  ${freqLabel} · ${typeLabel} · ${schedule.length} parcelas no total · ${pastCount} realizadas
+                  ${nextUpcoming ? `· Próxima: <strong>${formatDate(nextUpcoming.date)}</strong>` : ' · Concluído'}
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Total amortizado previsto</div>
+                <div style="font-weight:var(--font-weight-semibold);color:var(--color-success-600);">${formatCurrency(totalAmort)}</div>
+              </div>
+            </div>
+
+            <div class="inv-amort-schedule">
+              ${schedule.map(p => `
+                <div class="inv-amort-row ${p.isPast ? 'past' : p.isThisMonth ? 'this-month' : 'future'}">
+                  <span class="inv-amort-index">${p.index + 1}</span>
+                  <span class="inv-amort-date">${formatDate(p.date)}</span>
+                  <span class="inv-amort-amount">+ ${formatCurrency(p.amount)}</span>
+                  <span class="inv-amort-balance">saldo: ${formatCurrency(p.balance)}</span>
+                  ${p.isThisMonth ? `<span class="inv-amort-badge">Este mês</span>` : ''}
+                  ${p.isPast ? `<span style="font-size:10px;color:var(--color-gray-400);">✓</span>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }).join('')}
     </div>
   `;
 }
@@ -519,7 +769,7 @@ function bindRFDeleteEvents() {
   });
 }
 
-function bindRFFilterEvents(rf, redemptions = []) {
+function bindRFFilterEvents(rf, redemptions = [], rates = {}) {
   const searchEl = document.getElementById('rf-search');
   const sortEl   = document.getElementById('rf-sort');
   if (!searchEl || !sortEl) return;
@@ -527,10 +777,10 @@ function bindRFFilterEvents(rf, redemptions = []) {
   const rerender = () => {
     const container = document.getElementById('inv-content');
     if (!container) return;
-    container.innerHTML = renderRendaFixaTab(rf, redemptions);
+    container.innerHTML = renderRendaFixaTab(rf, redemptions, rates);
     buildRFChart(rf);
     bindRFDeleteEvents();
-    bindRFFilterEvents(rf, redemptions);
+    bindRFFilterEvents(rf, redemptions, rates);
     bindRedeemEvents('redeem-rf', 'rf', redemptions);
   };
 
@@ -901,6 +1151,51 @@ function renderRFFields() {
         </div>
       </div>
     </div>
+
+    <!-- Amortização -->
+    <div class="inv-amort-toggle-row">
+      <label class="inv-amort-toggle-label">
+        <input type="checkbox" name="hasAmortization" id="rf-has-amort" value="true">
+        <span>Este título possui amortizações periódicas</span>
+        <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-left:4px;">(CRI, CRA, Debênture, etc.)</span>
+      </label>
+    </div>
+    <div id="rf-amort-fields" style="display:none;">
+      <div class="inv-amort-box">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Frequência</label>
+            <select name="amortFrequency" class="form-control">
+              <option value="monthly">Mensal</option>
+              <option value="bimonthly">Bimestral</option>
+              <option value="quarterly">Trimestral</option>
+              <option value="semiannual" selected>Semestral</option>
+              <option value="annual">Anual</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Tipo de amortização</label>
+            <select name="amortType" class="form-control" id="rf-amort-type">
+              <option value="percentage">% do saldo devedor</option>
+              <option value="fixed">Valor fixo (R$)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label" id="rf-amort-value-label">Percentual por parcela (%)</label>
+            <input type="number" name="amortValue" class="form-control" placeholder="Ex: 10" step="0.01" min="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Data da 1ª amortização *</label>
+            <input type="date" name="firstAmortDate" class="form-control">
+          </div>
+        </div>
+        <div class="inv-info-box" style="margin-top:0;">
+          💡 O app vai calcular todas as datas de amortização automaticamente e alertar quando chegar a hora.
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -1059,6 +1354,26 @@ function bindReturnTypeEvents() {
       document.getElementById('rf-hybrid-fields').style.display = rt === 'hybrid' ? '' : 'none';
     });
   });
+
+  // Toggle amortização
+  const amortCheck = document.getElementById('rf-has-amort');
+  const amortFields = document.getElementById('rf-amort-fields');
+  if (amortCheck && amortFields) {
+    amortCheck.addEventListener('change', () => {
+      amortFields.style.display = amortCheck.checked ? '' : 'none';
+    });
+  }
+
+  // Troca label ao mudar tipo de amortização
+  const amortType = document.getElementById('rf-amort-type');
+  const amortLabel = document.getElementById('rf-amort-value-label');
+  if (amortType && amortLabel) {
+    amortType.addEventListener('change', () => {
+      amortLabel.textContent = amortType.value === 'percentage'
+        ? 'Percentual por parcela (%)'
+        : 'Valor fixo por parcela (R$)';
+    });
+  }
 }
 
 function handleAddRF(data) {
@@ -1075,6 +1390,15 @@ function handleAddRF(data) {
                    : returnType === 'hybrid'  ? (data.hybridIndexer || 'IPCA')
                    : '';
 
+  // Amortização
+  const hasAmortization = data.hasAmortization === 'true';
+  const amortization = hasAmortization ? {
+    frequency:      data.amortFrequency   || 'semiannual',
+    type:           data.amortType        || 'percentage',
+    value:          parseFloat(data.amortValue) || 0,
+    firstDate:      data.firstAmortDate   || '',
+  } : null;
+
   addInvestmentRF({
     name: data.name.trim(),
     value: parseFloat(data.value),
@@ -1085,6 +1409,7 @@ function handleAddRF(data) {
     percentage,
     indexer,
     geography: data.geography || 'brasil',
+    amortization,
   });
   closeModal();
   showToast('Título adicionado com sucesso!', 'success');
