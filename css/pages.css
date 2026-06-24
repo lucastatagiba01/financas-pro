@@ -1677,6 +1677,26 @@
   border-color: var(--color-gray-100);
 }
 
+.btn-amort-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: #15803D;
+  background: #DCFCE7;
+  border: 1px solid #86EFAC;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.btn-amort-confirm:hover {
+  background: #BBF7D0;
+}
+
 .inv-amort-index {
   font-size: 10px;
   color: var(--color-gray-400);

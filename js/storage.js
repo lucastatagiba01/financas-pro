@@ -331,6 +331,28 @@ export function deleteRedemption(id) {
   setStore(INV_REDEMPTIONS_KEY, (getStore(INV_REDEMPTIONS_KEY) || []).filter(r => r.id !== id));
 }
 
+// ── Amortization Confirmations ──
+const AMORT_CONFIRM_KEY = 'fp_amort_confirmations';
+
+export function getAmortConfirmations() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return (getStore(AMORT_CONFIRM_KEY) || []).filter(c => c.userId === user.id);
+}
+
+export function confirmAmortization(record) {
+  const all = getStore(AMORT_CONFIRM_KEY) || [];
+  const user = getCurrentUser();
+  const newC = { ...record, id: generateId(), userId: user.id, confirmedAt: new Date().toISOString() };
+  all.push(newC);
+  setStore(AMORT_CONFIRM_KEY, all);
+  return newC;
+}
+
+export function deleteAmortConfirmation(id) {
+  setStore(AMORT_CONFIRM_KEY, (getStore(AMORT_CONFIRM_KEY) || []).filter(c => c.id !== id));
+}
+
 // ── Selected Mode (FINANCIAL or INVESTMENTS) ──
 export function setSelectedMode(mode) {
   const validModes = ['FINANCIAL', 'INVESTMENTS'];

@@ -8,6 +8,8 @@ import {
   getInvestmentsRF, addInvestmentRF, deleteInvestmentRF,
   getInvestmentsRV, addInvestmentRV, deleteInvestmentRV,
   getRedemptions, addRedemption, deleteRedemption,
+  getAmortConfirmations, confirmAmortization, deleteAmortConfirmation,
+  addTransaction,
 } from '../storage.js';
 import { renderSidebar, bindSidebarEvents } from '../components/sidebar.js';
 import { renderHeader, bindHeaderEvents } from '../components/header.js';
@@ -74,6 +76,7 @@ async function renderTabContent(tab) {
   const rf = getInvestmentsRF();
   const rv = getInvestmentsRV();
   const redemptions = getRedemptions();
+  const amortConfirms = getAmortConfirmations();
   const container = document.getElementById('inv-content');
   if (!container) return;
 
@@ -86,15 +89,17 @@ async function renderTabContent(tab) {
 
   switch (tab) {
     case 'carteira':
-      container.innerHTML = renderCarteiraTab(rf, rv, redemptions, rates);
+      container.innerHTML = renderCarteiraTab(rf, rv, redemptions, rates, amortConfirms);
       buildCarteiraCharts(rf, rv, redemptions);
       bindCarteiraFilterEvents(rf, rv, redemptions);
+      bindAmortConfirmEvents();
       break;
     case 'rf':
-      container.innerHTML = renderRendaFixaTab(rf, redemptions, rates);
+      container.innerHTML = renderRendaFixaTab(rf, redemptions, rates, amortConfirms);
       buildRFChart(rf);
       bindRFDeleteEvents();
-      bindRFFilterEvents(rf, redemptions, rates);
+      bindRFFilterEvents(rf, redemptions, rates, amortConfirms);
+      bindAmortConfirmEvents();
       break;
     case 'rv':
       container.innerHTML = renderRendaVariavelTab(rv, redemptions);
@@ -202,7 +207,7 @@ function applyCarteiraFilters(posicoes) {
   return list;
 }
 
-function renderCarteiraTab(rf, rv, redemptions) {
+function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) {
   const totalRF = rf.reduce((s, i) => s + netValue(i, redemptions), 0);
   const totalCripto = rv.filter(i => i.assetType === 'cripto').reduce((s, i) => s + netValue(i, redemptions), 0);
   const totalRVsemCripto = rv.reduce((s, i) => s + netValue(i, redemptions), 0) - totalCripto;
@@ -312,18 +317,30 @@ function renderCarteiraTab(rf, rv, redemptions) {
           <span class="inv-alert-count" style="background:#FEF9C3;color:#713F12;">${amortizandoMes.length} parcela${amortizandoMes.length > 1 ? 's' : ''}</span>
         </div>
         <div class="inv-alert-list">
-          ${amortizandoMes.map(p => `
+          ${amortizandoMes.map(p => {
+            const confirmed = amortConfirms.find(
+              c => c.investmentId === p.invId && c.amortIndex === p.index
+            );
+            return `
             <div class="inv-alert-item">
               <div>
                 <div class="inv-alert-name">${escapeHtml(p.invName)}</div>
                 <div class="inv-alert-sub">Parcela ${p.index + 1} · ${formatDate(p.date)}</div>
               </div>
-              <div style="text-align:right;">
-                <div style="font-weight:var(--font-weight-semibold);color:var(--color-success-600);">+ ${formatCurrency(p.amount)}</div>
-                <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Saldo após: ${formatCurrency(p.balance)}</div>
+              <div style="display:flex;align-items:center;gap:var(--space-3);">
+                <div style="text-align:right;">
+                  <div style="font-weight:var(--font-weight-semibold);color:var(--color-success-600);">+ ${formatCurrency(p.amount)}</div>
+                  <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Saldo após: ${formatCurrency(p.balance)}</div>
+                </div>
+                ${confirmed
+                  ? `<span style="font-size:11px;color:var(--color-success-600);font-weight:600;">✓ Confirmado</span>`
+                  : `<button class="btn-amort-confirm" data-inv-id="${p.invId}" data-inv-name="${escapeHtml(p.invName)}" data-index="${p.index}" data-amount="${p.amount}" data-date="${p.date}">
+                       ✓ Confirmar
+                     </button>`
+                }
               </div>
             </div>
-          `).join('')}
+          `}).join('')}
         </div>
       </div>
       ` : ''}
@@ -468,7 +485,7 @@ function applyRFFilters(rf) {
   return list;
 }
 
-function renderRendaFixaTab(rf, redemptions = [], rates = {}) {
+function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []) {
   // Calcula totais usando valor ATUAL (com rendimentos)
   const totalAplicado = rf.reduce((s, i) => s + netValue(i, redemptions), 0);
   const totalAtual    = rf.reduce((s, i) => {
@@ -675,12 +692,12 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}) {
       </div>
 
       <!-- Cronograma de Amortizações -->
-      ${renderAmortizationCalendar(rf)}
+      ${renderAmortizationCalendar(rf, amortConfirms)}
     </div>
   `;
 }
 
-function renderAmortizationCalendar(rf) {
+function renderAmortizationCalendar(rf, amortConfirms = []) {
   const titlesWithAmort = rf.filter(i => i.amortization && i.amortization.firstDate);
   if (titlesWithAmort.length === 0) return '';
 
@@ -688,9 +705,7 @@ function renderAmortizationCalendar(rf) {
     <div class="card" style="margin-top:var(--space-5);">
       <div class="card-header" style="border-bottom:1px solid var(--color-gray-100);">
         <h3>📅 Cronograma de Amortizações</h3>
-        <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">
-          Projeção baseada nas regras cadastradas
-        </span>
+        <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Projeção baseada nas regras cadastradas</span>
       </div>
 
       ${titlesWithAmort.map(inv => {
@@ -706,39 +721,55 @@ function renderAmortizationCalendar(rf) {
           ? `${inv.amortization.value}% do saldo`
           : `${formatCurrency(inv.amortization.value)} fixo`;
 
-        const totalAmort    = schedule.reduce((s, p) => s + p.amount, 0);
-        const pastCount     = schedule.filter(p => p.isPast).length;
-        const nextUpcoming  = schedule.find(p => !p.isPast);
+        const totalAmort   = schedule.reduce((s, p) => s + p.amount, 0);
+        const pastCount    = schedule.filter(p => p.isPast).length;
+        const nextUpcoming = schedule.find(p => !p.isPast);
 
         return `
           <div class="inv-amort-title-block">
             <div class="inv-amort-title-header">
               <div>
-                <div style="font-weight:var(--font-weight-semibold);color:var(--color-gray-800);">
-                  ${escapeHtml(inv.name)}
-                </div>
+                <div style="font-weight:var(--font-weight-semibold);color:var(--color-gray-800);">${escapeHtml(inv.name)}</div>
                 <div style="font-size:var(--font-size-xs);color:var(--color-gray-500);margin-top:2px;">
-                  ${freqLabel} · ${typeLabel} · ${schedule.length} parcelas no total · ${pastCount} realizadas
+                  ${freqLabel} · ${typeLabel} · ${schedule.length} parcelas · ${pastCount} realizadas
                   ${nextUpcoming ? `· Próxima: <strong>${formatDate(nextUpcoming.date)}</strong>` : ' · Concluído'}
                 </div>
               </div>
               <div style="text-align:right;">
-                <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Total amortizado previsto</div>
+                <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Total previsto</div>
                 <div style="font-weight:var(--font-weight-semibold);color:var(--color-success-600);">${formatCurrency(totalAmort)}</div>
               </div>
             </div>
 
             <div class="inv-amort-schedule">
-              ${schedule.map(p => `
-                <div class="inv-amort-row ${p.isPast ? 'past' : p.isThisMonth ? 'this-month' : 'future'}">
-                  <span class="inv-amort-index">${p.index + 1}</span>
-                  <span class="inv-amort-date">${formatDate(p.date)}</span>
-                  <span class="inv-amort-amount">+ ${formatCurrency(p.amount)}</span>
-                  <span class="inv-amort-balance">saldo: ${formatCurrency(p.balance)}</span>
-                  ${p.isThisMonth ? `<span class="inv-amort-badge">Este mês</span>` : ''}
-                  ${p.isPast ? `<span style="font-size:10px;color:var(--color-gray-400);">✓</span>` : ''}
-                </div>
-              `).join('')}
+              ${schedule.map(p => {
+                const confirmed = amortConfirms.find(
+                  c => c.investmentId === inv.id && c.amortIndex === p.index
+                );
+                const canConfirm = (p.isPast || p.isThisMonth) && !confirmed;
+                const rowClass   = confirmed ? 'past' : p.isPast ? 'past' : p.isThisMonth ? 'this-month' : 'future';
+
+                return `
+                  <div class="inv-amort-row ${rowClass}">
+                    <span class="inv-amort-index">${p.index + 1}</span>
+                    <span class="inv-amort-date">${formatDate(p.date)}</span>
+                    <span class="inv-amort-amount">+ ${formatCurrency(p.amount)}</span>
+                    <span class="inv-amort-balance">saldo: ${formatCurrency(p.balance)}</span>
+                    ${p.isThisMonth && !confirmed ? `<span class="inv-amort-badge">Este mês</span>` : ''}
+                    ${confirmed
+                      ? `<span style="font-size:11px;color:var(--color-success-600);font-weight:600;">✓ Recebido ${formatDate(confirmed.confirmedAt?.split('T')[0])}</span>
+                         <button class="btn-icon btn-danger amort-unconfirm" data-id="${confirmed.id}" title="Desfazer">
+                           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/></svg>
+                         </button>`
+                      : canConfirm
+                        ? `<button class="btn-amort-confirm" data-inv-id="${inv.id}" data-inv-name="${escapeHtml(inv.name)}" data-index="${p.index}" data-amount="${p.amount}" data-date="${p.date}">
+                             ✓ Confirmar recebimento
+                           </button>`
+                        : ''
+                    }
+                  </div>
+                `;
+              }).join('')}
             </div>
           </div>
         `;
@@ -769,7 +800,7 @@ function bindRFDeleteEvents() {
   });
 }
 
-function bindRFFilterEvents(rf, redemptions = [], rates = {}) {
+function bindRFFilterEvents(rf, redemptions = [], rates = {}, amortConfirms = []) {
   const searchEl = document.getElementById('rf-search');
   const sortEl   = document.getElementById('rf-sort');
   if (!searchEl || !sortEl) return;
@@ -777,16 +808,126 @@ function bindRFFilterEvents(rf, redemptions = [], rates = {}) {
   const rerender = () => {
     const container = document.getElementById('inv-content');
     if (!container) return;
-    container.innerHTML = renderRendaFixaTab(rf, redemptions, rates);
+    container.innerHTML = renderRendaFixaTab(rf, redemptions, rates, amortConfirms);
     buildRFChart(rf);
     bindRFDeleteEvents();
-    bindRFFilterEvents(rf, redemptions, rates);
+    bindRFFilterEvents(rf, redemptions, rates, amortConfirms);
     bindRedeemEvents('redeem-rf', 'rf', redemptions);
+    bindAmortConfirmEvents();
   };
 
   searchEl.addEventListener('input', (e) => { _rfSearch = e.target.value; rerender(); });
   sortEl.addEventListener('change', (e) => { _rfSort   = e.target.value; rerender(); });
   bindRedeemEvents('redeem-rf', 'rf', redemptions);
+}
+
+function bindAmortConfirmEvents() {
+  // Confirmar recebimento — abre modal com valor editável
+  document.querySelectorAll('.btn-amort-confirm').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const { invId, invName, index, amount, date } = btn.dataset;
+      openAmortConfirmModal({
+        invId, invName,
+        index:     parseInt(index),
+        projected: parseFloat(amount),
+        date,
+      });
+    });
+  });
+
+  // Desfazer confirmação
+  document.querySelectorAll('.amort-unconfirm').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('Desfazer esta confirmação?')) return;
+      deleteAmortConfirmation(btn.dataset.id);
+      showToast('Confirmação removida.', 'success');
+      renderTabContent(sessionStorage.getItem('invActiveTab') || 'rf');
+    });
+  });
+}
+
+function openAmortConfirmModal({ invId, invName, index, projected, date }) {
+  const bodyHtml = `
+    <form id="amort-confirm-form">
+      <div class="inv-info-box" style="margin-bottom:var(--space-4);">
+        <strong>${escapeHtml(invName)}</strong> — Parcela ${index + 1}
+        <div style="font-size:var(--font-size-xs);color:var(--color-gray-500);margin-top:2px;">
+          Valor projetado: <strong>${formatCurrency(projected)}</strong>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Valor recebido (R$) *</label>
+        <input type="number" id="amort-actual-amount" class="form-control"
+          value="${projected.toFixed(2)}" step="0.01" min="0" required>
+        <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:4px;">
+          Edite se o valor recebido foi diferente do projetado
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Data de recebimento *</label>
+        <input type="date" id="amort-actual-date" class="form-control" value="${date}" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Observação (opcional)</label>
+        <input type="text" id="amort-note" class="form-control" placeholder="Ex: Valor com deságio, pagamento antecipado...">
+      </div>
+    </form>
+  `;
+
+  const footerHtml = `
+    <button class="btn btn-secondary" id="amort-cancel-btn">Cancelar</button>
+    <button class="btn btn-primary" id="amort-save-btn">✓ Confirmar recebimento</button>
+  `;
+
+  openModal('✓ Confirmar Recebimento de Amortização', bodyHtml, footerHtml);
+
+  document.getElementById('amort-cancel-btn').addEventListener('click', closeModal);
+  document.getElementById('amort-save-btn').addEventListener('click', () => {
+    const actualAmount = parseFloat(document.getElementById('amort-actual-amount').value);
+    const actualDate   = document.getElementById('amort-actual-date').value;
+    const note         = document.getElementById('amort-note').value.trim();
+
+    if (!actualAmount || actualAmount <= 0) {
+      showToast('Informe o valor recebido.', 'error');
+      return;
+    }
+    if (!actualDate) {
+      showToast('Informe a data de recebimento.', 'error');
+      return;
+    }
+
+    confirmAmortization({
+      investmentId:    invId,
+      investmentName:  invName,
+      amortIndex:      index,
+      projectedAmount: projected,
+      amount:          actualAmount,
+      date:            actualDate,
+      note,
+    });
+
+    // Lança receita em Movimentações automaticamente
+    addTransaction({
+      description: `Amortização — ${invName} (parcela ${index + 1})`,
+      amount:      actualAmount,
+      date:        actualDate,
+      type:        'income',
+      categoryId:  'cat_investimentos',
+      note:        note || '',
+      fromInvestment: true,
+    });
+
+    closeModal();
+    const diff = actualAmount - projected;
+    const diffMsg = diff !== 0
+      ? ` (${diff > 0 ? '+' : ''}${formatCurrency(diff)} do projetado)`
+      : '';
+    showToast(`Amortização de ${formatCurrency(actualAmount)} confirmada e lançada em Movimentações!${diffMsg}`, 'success');
+    renderTabContent(sessionStorage.getItem('invActiveTab') || 'rf');
+  });
 }
 
 // ── Tab 3: Renda Variável ──
@@ -1489,8 +1630,20 @@ function openRedemptionModal(id, name, netVal, type, redemptions) {
     if (!date)                  { showToast('Informe a data do resgate.', 'error'); return; }
 
     addRedemption({ investmentId: id, investmentType: type, amount, date, note });
+
+    // Lança receita em Movimentações automaticamente
+    addTransaction({
+      description: `Resgate — ${name}`,
+      amount,
+      date,
+      type: 'income',
+      categoryId: 'cat_investimentos',
+      note: note || '',
+      fromInvestment: true,
+    });
+
     closeModal();
-    showToast('Resgate registrado com sucesso!', 'success');
+    showToast('Resgate registrado e lançado em Movimentações!', 'success');
     renderTabContent(type === 'rf' ? 'rf' : 'rv');
   });
 }
