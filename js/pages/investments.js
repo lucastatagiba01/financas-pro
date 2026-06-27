@@ -4,11 +4,15 @@
 
 import { formatCurrency, formatDate, escapeHtml, icons } from '../utils.js';
 import { getRates, calcCurrentValueRF, calcReturn, formatRateLabel, daysSince } from '../services/rates.js';
+import { getQuotes, getLastUpdateTime, calcRVReturn, getDividends } from '../services/quotes.js';
+import { getFundInfo, classifyFund, normalizeCNPJ, getManualQuotas, saveManualQuota, clearFundQuotaCache } from '../services/funds.js';
 import {
-  getInvestmentsRF, addInvestmentRF, deleteInvestmentRF,
-  getInvestmentsRV, addInvestmentRV, deleteInvestmentRV,
+  getInvestmentsRF, addInvestmentRF, updateInvestmentRF, deleteInvestmentRF,
+  getInvestmentsRV, addInvestmentRV, updateInvestmentRV, deleteInvestmentRV,
+  getInvestmentsFunds, addInvestmentFund, updateInvestmentFund, deleteInvestmentFund,
   getRedemptions, addRedemption, deleteRedemption,
   getAmortConfirmations, confirmAmortization, deleteAmortConfirmation,
+  getDivConfirmations, confirmDividend, deleteDivConfirmation,
   addTransaction,
 } from '../storage.js';
 import { renderSidebar, bindSidebarEvents } from '../components/sidebar.js';
@@ -18,7 +22,9 @@ import { showToast } from '../components/toast.js';
 import { openModal, closeModal } from '../components/modal.js';
 
 let _tabChangeHandler = null;
-let _rates = null; // cache das taxas BCB
+let _rates     = null; // cache das taxas BCB
+let _quotes    = null; // cache das cotações RV
+let _dividends = null; // cache dos dividendos
 let _rfSearch = '';
 let _rfSort = 'maturity_asc';
 let _rvSearch = '';
@@ -95,18 +101,66 @@ async function renderTabContent(tab) {
       bindAmortConfirmEvents();
       break;
     case 'rf':
-      container.innerHTML = renderRendaFixaTab(rf, redemptions, rates, amortConfirms);
-      buildRFChart(rf);
-      bindRFDeleteEvents();
-      bindRFFilterEvents(rf, redemptions, rates, amortConfirms);
+    case 'amortizacoes': {
+      const rfSubTab = tab === 'amortizacoes' ? 'amortizacoes' : (sessionStorage.getItem('rfSubTab') || 'posicao');
+      sessionStorage.setItem('rfSubTab', rfSubTab);
+      container.innerHTML = renderRFWithSubTabs(rf, redemptions, rates, amortConfirms, rfSubTab);
+      if (rfSubTab === 'posicao') {
+        buildRFChart(rf);
+        bindRFDeleteEvents();
+        bindRFFilterEvents(rf, redemptions, rates, amortConfirms);
+      }
       bindAmortConfirmEvents();
+      bindRFSubTabEvents();
       break;
+    }
     case 'rv':
-      container.innerHTML = renderRendaVariavelTab(rv, redemptions);
-      buildRVChart(rv);
-      bindRVDeleteEvents();
-      bindRVFilterEvents(rv, redemptions);
+    case 'dividendos': {
+      const tickers = [...new Set(rv.map(i => i.ticker).filter(Boolean))];
+      const rvSubTab = tab === 'dividendos' ? 'dividendos' : (sessionStorage.getItem('rvSubTab') || 'posicao');
+      sessionStorage.setItem('rvSubTab', rvSubTab);
+
+      // Busca cotações se necessário
+      if (tickers.length > 0 && !_quotes) {
+        container.innerHTML = `<div style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">Buscando cotações...</div>`;
+        _quotes = await getQuotes(tickers);
+      } else if (tickers.length > 0) {
+        const missing = tickers.filter(t => !_quotes[t]);
+        if (missing.length > 0) {
+          const fresh = await getQuotes(missing);
+          _quotes = { ..._quotes, ...fresh };
+        }
+      }
+
+      // Busca dividendos se necessário
+      if (rvSubTab === 'dividendos' && tickers.length > 0 && !_dividends) {
+        container.innerHTML = `<div style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">Buscando dividendos...</div>`;
+        localStorage.removeItem('fp_dividends_cache');
+        _dividends = await getDividends(tickers);
+      }
+
+      const quotes     = _quotes || {};
+      const divConfirms = getDivConfirmations();
+      container.innerHTML = renderRVWithSubTabs(rv, redemptions, quotes, _dividends || {}, divConfirms, rvSubTab);
+
+      if (rvSubTab === 'posicao') {
+        buildRVChart(rv);
+        bindRVDeleteEvents();
+        bindRVFilterEvents(rv, redemptions, quotes);
+        bindRedeemEvents('redeem-rv', 'rv', redemptions);
+      } else {
+        bindDividendEvents();
+      }
+      bindRVSubTabEvents(rv, redemptions, quotes, divConfirms);
       break;
+    }
+    case 'fundos': {
+      const funds  = getInvestmentsFunds();
+      const quotas = getManualQuotas();
+      container.innerHTML = renderFundosTab(funds, quotas);
+      bindFundEvents();
+      break;
+    }
     case 'formulario':
       container.innerHTML = renderFormularioTab();
       bindFormEvents();
@@ -498,6 +552,11 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
   const pre    = rf.filter(i => i.returnType === 'pre').reduce((s, i) => s + netValue(i, redemptions), 0);
   const pos    = rf.filter(i => i.returnType === 'pos').reduce((s, i) => s + netValue(i, redemptions), 0);
   const hybrid = rf.filter(i => i.returnType === 'hybrid').reduce((s, i) => s + netValue(i, redemptions), 0);
+
+  // Liquidez
+  const liqDaily     = rf.filter(i => i.liquidity === 'daily').reduce((s, i) => s + netValue(i, redemptions), 0);
+  const liqMaturity  = rf.filter(i => !i.liquidity || i.liquidity === 'maturity').reduce((s, i) => s + netValue(i, redemptions), 0);
+  const liqPct = totalAplicado > 0 ? (liqDaily / totalAplicado * 100).toFixed(0) : 0;
   const filtered = applyRFFilters(rf);
 
   // IPCA anualizado para exibição
@@ -568,33 +627,67 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
         </div>
       </div>
 
+      <!-- Quadrantes de Liquidez -->
+      <div class="liq-quadrants">
+        <div class="liq-quadrant liq-quadrant-green">
+          <div class="liq-q-icon">🛡️</div>
+          <div class="liq-q-label">Reserva de Emergência</div>
+          <div class="liq-q-value">${formatCurrency(liqDaily)}</div>
+          <div class="liq-q-sub">${rf.filter(i => i.liquidity === 'daily').length} título${rf.filter(i => i.liquidity === 'daily').length !== 1 ? 's' : ''} · liquidez diária</div>
+          <div class="liq-q-pct">${liqPct}% da carteira</div>
+        </div>
+        <div class="liq-quadrant liq-quadrant-gray">
+          <div class="liq-q-icon">🔒</div>
+          <div class="liq-q-label">No Vencimento</div>
+          <div class="liq-q-value">${formatCurrency(liqMaturity)}</div>
+          <div class="liq-q-sub">${rf.filter(i => !i.liquidity || i.liquidity === 'maturity').length} título${rf.filter(i => !i.liquidity || i.liquidity === 'maturity').length !== 1 ? 's' : ''} · travado</div>
+          <div class="liq-q-pct">${totalAplicado > 0 ? (liqMaturity/totalAplicado*100).toFixed(0) : 0}% da carteira</div>
+        </div>
+      </div>
+
       <div class="inv-charts-row" style="margin-bottom:var(--space-5);">
+
+        <!-- Por Indexador -->
         <div class="card">
-          <div class="card-header"><h3>Distribuição por Tipo</h3></div>
-          <div class="chart-container" style="height:220px;">
-            ${rf.length > 0 ? '<canvas id="chart-rf-tipo"></canvas>' : emptyChart()}
-          </div>
-        </div>
-        <div class="card">
-          <div class="card-header"><h3>Resumo por Tipo</h3></div>
+          <div class="card-header"><h3>Por Indexador</h3></div>
           <div class="inv-rf-legend">
-            <div class="inv-rf-type-item">
-              <span class="inv-geo-dot" style="background:#3B82F6;"></span>
-              <span>Pré-fixado</span>
-              <strong>${formatCurrency(pre)}</strong>
-            </div>
-            <div class="inv-rf-type-item">
-              <span class="inv-geo-dot" style="background:#22C55E;"></span>
-              <span>Pós-fixado</span>
-              <strong>${formatCurrency(pos)}</strong>
-            </div>
-            <div class="inv-rf-type-item">
-              <span class="inv-geo-dot" style="background:#F59E0B;"></span>
-              <span>Híbrido</span>
-              <strong>${formatCurrency(hybrid)}</strong>
-            </div>
+            ${[
+              { label: 'CDI',      color: '#3B82F6', val: rf.filter(i => (i.returnType==='pos' && (i.posIndexer||i.indexer||'CDI').toUpperCase()==='CDI') ).reduce((s,i)=>s+netValue(i,redemptions),0) },
+              { label: 'SELIC',    color: '#6366F1', val: rf.filter(i => (i.returnType==='pos' && (i.posIndexer||i.indexer||'').toUpperCase()==='SELIC') ).reduce((s,i)=>s+netValue(i,redemptions),0) },
+              { label: 'Pré',      color: '#22C55E', val: rf.filter(i => i.returnType==='pre').reduce((s,i)=>s+netValue(i,redemptions),0) },
+              { label: 'Inflação', color: '#F59E0B', val: rf.filter(i => i.returnType==='hybrid' || (i.returnType==='pos' && ['IPCA','IGPM'].includes((i.posIndexer||i.indexer||'').toUpperCase()))).reduce((s,i)=>s+netValue(i,redemptions),0) },
+            ].filter(r => r.val > 0).map(r => `
+              <div class="inv-rf-type-item">
+                <span class="inv-geo-dot" style="background:${r.color};"></span>
+                <span>${r.label}</span>
+                <span class="rf-legend-pct">${totalAplicado > 0 ? (r.val/totalAplicado*100).toFixed(0) : 0}%</span>
+                <strong>${formatCurrency(r.val)}</strong>
+              </div>`).join('') || '<div style="padding:var(--space-4);color:var(--color-gray-400);font-size:var(--font-size-sm);">Nenhum título cadastrado</div>'}
           </div>
         </div>
+
+        <!-- Por Categoria -->
+        <div class="card">
+          <div class="card-header"><h3>Por Categoria</h3></div>
+          <div class="inv-rf-legend">
+            ${[
+              { label: 'Título Público',  color: '#6366F1', key: 'publico'  },
+              { label: 'Bancário',        color: '#3B82F6', key: 'bancario' },
+              { label: 'Crédito Privado', color: '#F59E0B', key: 'privado'  },
+            ].map(cat => {
+              const val = rf.filter(i => (i.category||'bancario') === cat.key).reduce((s,i)=>s+netValue(i,redemptions),0);
+              if (!val) return '';
+              return `
+                <div class="inv-rf-type-item">
+                  <span class="inv-geo-dot" style="background:${cat.color};"></span>
+                  <span>${cat.label}</span>
+                  <span class="rf-legend-pct">${totalAplicado > 0 ? (val/totalAplicado*100).toFixed(0) : 0}%</span>
+                  <strong>${formatCurrency(val)}</strong>
+                </div>`;
+            }).join('') || '<div style="padding:var(--space-4);color:var(--color-gray-400);font-size:var(--font-size-sm);">Nenhum título cadastrado</div>'}
+          </div>
+        </div>
+
       </div>
 
       <div class="card">
@@ -652,6 +745,9 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
                       <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;">
                         <span class="inv-badge inv-badge-${inv.returnType}">${returnTypeLabel(inv)}</span>
                         ${inv.amortization ? `<span class="inv-badge" style="background:#FEF9C3;color:#713F12;">Amortiza</span>` : ''}
+                        ${inv.liquidity === 'daily'
+                          ? `<span class="liq-badge liq-badge-daily">🛡️ Reserva</span>`
+                          : `<span class="liq-badge liq-badge-maturity">🔒 Vencimento</span>`}
                       </div>
                       ${redeemed > 0 ? `<div style="font-size:var(--font-size-xs);color:var(--color-danger-500);margin-top:2px;">Resgatado: ${formatCurrency(redeemed)}</div>` : ''}
                     </td>
@@ -674,10 +770,16 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
                       ${isNear ? `<span class="inv-near-badge">⚠️ ${diffDays === 0 ? 'hoje' : diffDays + 'd'}</span>` : ''}
                     </td>
                     <td style="display:flex;gap:var(--space-1);align-items:center;">
-                      ${nv > 0 ? `<button class="btn-redeem redeem-rf" data-id="${inv.id}" data-name="${escapeHtml(inv.name)}" data-net="${nv}" title="Resgatar">
+                      ${nv > 0 ? `<button class="btn-redeem redeem-rf"
+                        data-id="${inv.id}" data-name="${escapeHtml(inv.name)}"
+                        data-net="${nv}" data-invested="${nv}" data-current="${current}"
+                        title="Resgatar">
                         <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="m16 6-4 4-4-4"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
                         Resgatar
                       </button>` : ''}
+                      <button class="btn-icon edit-rf" data-id="${inv.id}" data-name="${escapeHtml(inv.name)}" title="Editar nome">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </button>
                       <button class="btn-icon btn-danger delete-rf" data-id="${inv.id}" title="Excluir">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                       </button>
@@ -691,8 +793,6 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
         ` : `<div class="empty-state" style="padding:var(--space-6);">${rf.length > 0 ? 'Nenhum título encontrado para o filtro.' : 'Nenhum título cadastrado.'}</div>`}
       </div>
 
-      <!-- Cronograma de Amortizações -->
-      ${renderAmortizationCalendar(rf, amortConfirms)}
     </div>
   `;
 }
@@ -779,18 +879,16 @@ function renderAmortizationCalendar(rf, amortConfirms = []) {
 }
 
 function buildRFChart(rf) {
-  if (!rf.length) return;
-  const pre    = rf.filter(i => i.returnType === 'pre').reduce((s, i) => s + i.value, 0);
-  const pos    = rf.filter(i => i.returnType === 'pos').reduce((s, i) => s + i.value, 0);
-  const hybrid = rf.filter(i => i.returnType === 'hybrid').reduce((s, i) => s + i.value, 0);
-  const l = [], d = [], c = [];
-  if (pre)    { l.push('Pré-fixado');  d.push(pre);    c.push('#3B82F6'); }
-  if (pos)    { l.push('Pós-fixado');  d.push(pos);    c.push('#22C55E'); }
-  if (hybrid) { l.push('Híbrido');     d.push(hybrid); c.push('#F59E0B'); }
-  createDoughnutChart('chart-rf-tipo', l, d, c);
+  // gráfico removido — substituído por cards de indexador e categoria
 }
 
 function bindRFDeleteEvents() {
+  document.querySelectorAll('.edit-rf').forEach(btn => {
+    btn.addEventListener('click', () =>
+      openEditNameModal(btn.dataset.id, btn.dataset.name, updateInvestmentRF, 'rf')
+    );
+  });
+
   document.querySelectorAll('.delete-rf').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!confirm('Excluir este título?')) return;
@@ -948,33 +1046,117 @@ function applyRVFilters(rv, redemptions = []) {
   return list;
 }
 
-function renderRendaVariavelTab(rv, redemptions = []) {
-  const total = rv.reduce((s, i) => s + netValue(i, redemptions), 0);
+// ── Wrapper RV com sub-abas ──────────────────────────────────────────────────
+
+function renderRVWithSubTabs(rv, redemptions, quotes, dividends, divConfirms, activeSubTab) {
+  const subTabBar = `
+    <div class="rv-subtab-bar">
+      <button class="rv-subtab ${activeSubTab === 'posicao' ? 'active' : ''}" data-rv-subtab="posicao">
+        📈 Posição
+      </button>
+      <button class="rv-subtab ${activeSubTab === 'dividendos' ? 'active' : ''}" data-rv-subtab="dividendos">
+        💵 Dividendos
+      </button>
+    </div>
+  `;
+  const content = activeSubTab === 'dividendos'
+    ? renderDividendosTab(rv, dividends, divConfirms)
+    : renderRendaVariavelTab(rv, redemptions, quotes);
+
+  return subTabBar + content;
+}
+
+function bindRVSubTabEvents(rv, redemptions, quotes, divConfirms) {
+  document.querySelectorAll('[data-rv-subtab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sessionStorage.setItem('rvSubTab', btn.dataset.rvSubtab);
+      renderTabContent('rv');
+    });
+  });
+}
+
+function renderRendaVariavelTab(rv, redemptions = [], quotes = {}) {
   const numEmpresas = new Set(rv.filter(i => i.assetType === 'acao').map(i => i.ticker)).size;
-  const filtered = applyRVFilters(rv, redemptions);
+  const filtered    = applyRVFilters(rv, redemptions);
+
+  // Totais usando preço atual quando disponível
+  let totalInvestido = 0;
+  let totalAtual     = 0;
+  rv.forEach(inv => {
+    const q   = quotes[inv.ticker?.toUpperCase()];
+    const qty = parseFloat(inv.quantity) || 0;
+    totalInvestido += qty * (parseFloat(inv.avgPrice) || 0);
+    totalAtual     += q?.price ? qty * q.price : qty * (parseFloat(inv.avgPrice) || 0);
+  });
+  const totalRetorno    = totalAtual - totalInvestido;
+  const totalRetornoPct = totalInvestido > 0 ? (totalRetorno / totalInvestido) * 100 : 0;
+
+  // Última atualização
+  const lastUpdate    = getLastUpdateTime(quotes);
+  const lastUpdateStr = lastUpdate
+    ? `Atualizado às ${lastUpdate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`
+    : 'Cotações não carregadas';
 
   return `
     <div class="animate-fade-in-up">
+
+      <!-- Barra de cotações -->
+      <div class="inv-rates-bar">
+        <span class="inv-rates-title">📡 Cotações ao vivo</span>
+        <div class="inv-rates-list">
+          ${rv.filter(i => i.ticker).slice(0, 6).map(inv => {
+            const q = quotes[inv.ticker?.toUpperCase()];
+            if (!q || !q.price) return `<div class="inv-rate-item"><span class="inv-rate-label">${inv.ticker}</span><span style="font-size:10px;color:var(--color-gray-400);" title="Sem cotação na BRAPI">indisponível</span></div>`;
+            const up = q.change >= 0;
+            return `
+              <div class="inv-rate-item">
+                <span class="inv-rate-label">${inv.ticker}</span>
+                <span class="inv-rate-value">${formatCurrency(q.price)}</span>
+                <span style="font-size:10px;color:${up ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+                  ${up ? '▲' : '▼'} ${Math.abs(q.change).toFixed(2)}%
+                </span>
+              </div>`;
+          }).join('')}
+        </div>
+        <span class="inv-rates-badge ok">✓ ${lastUpdateStr}</span>
+        <button id="btn-refresh-quotes" style="margin-left:auto;background:none;border:none;cursor:pointer;font-size:var(--font-size-xs);color:var(--color-gray-500);display:flex;align-items:center;gap:4px;" title="Atualizar cotações agora">
+          🔄 Atualizar
+        </button>
+      </div>
+
+      <!-- Cards de resumo -->
       <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
         <div class="stat-card">
-          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">📈</div>
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">💰</div>
           <div class="stat-content">
-            <div class="stat-label">Total em Renda Variável</div>
-            <div class="stat-value">${formatCurrency(total)}</div>
+            <div class="stat-label">Total Investido</div>
+            <div class="stat-value">${formatCurrency(totalInvestido)}</div>
           </div>
         </div>
         <div class="stat-card stagger-1">
-          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">💼</div>
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">📈</div>
           <div class="stat-content">
-            <div class="stat-label">Total de Ativos</div>
-            <div class="stat-value">${rv.length}</div>
+            <div class="stat-label">Valor Atual</div>
+            <div class="stat-value">${formatCurrency(totalAtual)}</div>
           </div>
         </div>
         <div class="stat-card stagger-2">
+          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">🎯</div>
+          <div class="stat-content">
+            <div class="stat-label">Rendimento Total</div>
+            <div class="stat-value" style="color:${totalRetorno >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+              ${totalRetorno >= 0 ? '+' : ''}${formatCurrency(totalRetorno)}
+            </div>
+            <div class="inv-pct-label" style="color:${totalRetornoPct >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+              ${totalRetornoPct >= 0 ? '+' : ''}${totalRetornoPct.toFixed(2)}%
+            </div>
+          </div>
+        </div>
+        <div class="stat-card stagger-3">
           <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">🏭</div>
           <div class="stat-content">
-            <div class="stat-label">Empresas (Ações)</div>
-            <div class="stat-value">${numEmpresas}</div>
+            <div class="stat-label">Ativos / Empresas</div>
+            <div class="stat-value">${rv.length} / ${numEmpresas}</div>
           </div>
         </div>
       </div>
@@ -1014,40 +1196,77 @@ function renderRendaVariavelTab(rv, redemptions = []) {
           <table class="inv-table">
             <thead>
               <tr>
-                <th>Ticker</th>
-                <th>Nome</th>
-                <th>Tipo</th>
-                <th>Setor</th>
+                <th>Ativo</th>
                 <th>Qtde</th>
                 <th>Preço Médio</th>
+                <th>Preço Atual</th>
                 <th>Valor Atual</th>
-                <th>Local</th>
+                <th>Rendimento</th>
+                <th>Hoje</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               ${filtered.map(inv => {
-                const nv = netValue(inv, redemptions);
+                const nv       = netValue(inv, redemptions);
                 const redeemed = totalRedeemed(inv, redemptions);
+                const ticker   = inv.ticker?.toUpperCase();
+                const q        = quotes[ticker];
+                const rv_ret   = q?.price ? calcRVReturn(inv, q.price) : null;
+                const currentVal = rv_ret ? rv_ret.current : nv;
+                const dayUp    = (q?.change || 0) >= 0;
+
                 return `
                   <tr>
-                    <td><strong class="inv-ticker">${escapeHtml(inv.ticker || '—')}</strong></td>
                     <td>
-                      ${escapeHtml(inv.name)}
-                      ${redeemed > 0 ? `<div style="font-size:var(--font-size-xs);color:var(--color-danger-500);">Resgatado: ${formatCurrency(redeemed)}</div>` : ''}
+                      <div style="display:flex;align-items:center;gap:var(--space-2);">
+                        <strong class="inv-ticker">${escapeHtml(ticker || '—')}</strong>
+                        <span class="inv-badge inv-badge-type">${ASSET_LABELS[inv.assetType] || inv.assetType}</span>
+                      </div>
+                      <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:2px;">
+                        ${escapeHtml(inv.name)}
+                        ${redeemed > 0 ? `· Resgatado: ${formatCurrency(redeemed)}` : ''}
+                      </div>
                     </td>
-                    <td><span class="inv-badge inv-badge-type">${ASSET_LABELS[inv.assetType] || inv.assetType}</span></td>
-                    <td>${SECTOR_LABELS[inv.sector] || inv.sector || '—'}</td>
-                    <td>${inv.quantity}</td>
-                    <td>${formatCurrency(inv.avgPrice)}</td>
-                    <td><strong>${formatCurrency(nv)}</strong>
-                      ${redeemed > 0 ? `<div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Original: ${formatCurrency(inv.value)}</div>` : ''}
+                    <td style="font-weight:var(--font-weight-medium);">${inv.quantity}</td>
+                    <td style="color:var(--color-gray-600);">${formatCurrency(inv.avgPrice)}</td>
+                    <td>
+                      ${q?.price
+                        ? `<strong>${formatCurrency(q.price)}</strong>`
+                        : `<span style="color:var(--color-gray-400);font-size:var(--font-size-xs);" title="Ticker não encontrado na BRAPI — verifique se o código está correto">⚠ sem cotação</span>`
+                      }
                     </td>
-                    <td>${inv.geography === 'brasil' ? '🇧🇷' : '🌎'}</td>
+                    <td><strong>${formatCurrency(currentVal)}</strong></td>
+                    <td>
+                      ${rv_ret
+                        ? `<span style="color:${rv_ret.returnBRL >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};font-weight:var(--font-weight-semibold);">
+                             ${rv_ret.returnBRL >= 0 ? '+' : ''}${formatCurrency(rv_ret.returnBRL)}
+                           </span>
+                           <div style="font-size:var(--font-size-xs);color:${rv_ret.returnPct >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+                             ${rv_ret.returnPct >= 0 ? '+' : ''}${rv_ret.returnPct.toFixed(2)}%
+                           </div>`
+                        : '<span style="color:var(--color-gray-400);font-size:var(--font-size-xs);">—</span>'
+                      }
+                    </td>
+                    <td>
+                      ${q?.change != null
+                        ? `<span style="font-size:var(--font-size-xs);font-weight:600;color:${dayUp ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+                             ${dayUp ? '▲' : '▼'} ${Math.abs(q.change).toFixed(2)}%
+                           </span>`
+                        : '—'
+                      }
+                    </td>
                     <td style="display:flex;gap:var(--space-1);">
-                      ${nv > 0 ? `<button class="btn-icon btn-redeem redeem-rv" data-id="${inv.id}" data-name="${escapeHtml(inv.name)}" data-net="${nv}" title="Resgatar">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="m16 6-4 4-4-4"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                      ${nv > 0 ? `<button class="btn-redeem redeem-rv"
+                        data-id="${inv.id}" data-name="${escapeHtml(inv.name)}"
+                        data-net="${nv}" data-invested="${nv}" data-current="${currentVal}"
+                        title="Vender">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="m16 6-4 4-4-4"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                        Vender
                       </button>` : ''}
+                      <button class="btn-icon edit-rv" data-id="${inv.id}" data-name="${escapeHtml(inv.name)}" title="Editar nome">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                      </button>
                       <button class="btn-icon btn-danger delete-rv" data-id="${inv.id}" title="Excluir">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                       </button>
@@ -1064,22 +1283,743 @@ function renderRendaVariavelTab(rv, redemptions = []) {
   `;
 }
 
-function bindRVFilterEvents(rv, redemptions = []) {
+function bindRVFilterEvents(rv, redemptions = [], quotes = {}) {
   const searchEl = document.getElementById('rv-search');
   const sortEl   = document.getElementById('rv-sort');
   if (!searchEl || !sortEl) return;
   const rerender = () => {
     const c = document.getElementById('inv-content');
     if (!c) return;
-    c.innerHTML = renderRendaVariavelTab(rv, redemptions);
+    c.innerHTML = renderRendaVariavelTab(rv, redemptions, quotes);
     buildRVChart(rv);
     bindRVDeleteEvents();
-    bindRVFilterEvents(rv, redemptions);
+    bindRVFilterEvents(rv, redemptions, quotes);
     bindRedeemEvents('redeem-rv', 'rv', redemptions);
   };
   searchEl.addEventListener('input', (e) => { _rvSearch = e.target.value; rerender(); });
   sortEl.addEventListener('change',  (e) => { _rvSort   = e.target.value; rerender(); });
   bindRedeemEvents('redeem-rv', 'rv', redemptions);
+
+  document.getElementById('btn-refresh-quotes')?.addEventListener('click', async () => {
+    localStorage.removeItem('fp_quotes_cache');
+    _quotes = null;
+    renderTabContent('rv');
+  });
+}
+
+// ── Tab: Fundos ──────────────────────────────────────────────────────────────
+
+function renderFundosTab(funds, quotas) {
+  // quotas = { [cnpj]: { quota, date, updatedAt } } — cotas manuais
+  let totalInvestido = 0, totalAtual = 0;
+  funds.forEach(f => {
+    const invested = (parseFloat(f.quotas) || 0) * (parseFloat(f.avgQuotaPrice) || 0);
+    const q = quotas[normalizeCNPJ(f.cnpj)];
+    const current = q?.quota ? (parseFloat(f.quotas) || 0) * q.quota : invested;
+    totalInvestido += invested;
+    totalAtual     += current;
+  });
+  const totalRetorno    = totalAtual - totalInvestido;
+  const totalRetornoPct = totalInvestido > 0 ? (totalRetorno / totalInvestido) * 100 : 0;
+
+  // Última atualização das cotas manuais
+  const allDates = Object.values(quotas).filter(q => q?.date).map(q => q.date);
+  const lastDate = allDates.length ? allDates.sort().at(-1) : null;
+  const lastDateStr = lastDate
+    ? new Date(lastDate + 'T12:00:00').toLocaleDateString('pt-BR')
+    : null;
+
+  return `
+    <div class="animate-fade-in-up">
+
+      <!-- Barra de status -->
+      <div class="inv-rates-bar">
+        <span class="inv-rates-title">🏦 Cotas dos Fundos</span>
+        <span class="inv-rates-badge ${lastDate ? 'ok' : 'stale'}">
+          ${lastDate ? `✓ Atualizado em ${lastDateStr}` : '⚠ Nenhuma cota registrada'}
+        </span>
+        <span style="margin-left:auto;font-size:var(--font-size-xs);color:var(--color-gray-400);">
+          Clique em ✏️ para atualizar a cota de cada fundo
+        </span>
+      </div>
+
+      <!-- Cards -->
+      <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">💰</div>
+          <div class="stat-content">
+            <div class="stat-label">Total Investido</div>
+            <div class="stat-value">${formatCurrency(totalInvestido)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-1">
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">📈</div>
+          <div class="stat-content">
+            <div class="stat-label">Valor Atual</div>
+            <div class="stat-value">${formatCurrency(totalAtual)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-2">
+          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">🎯</div>
+          <div class="stat-content">
+            <div class="stat-label">Rendimento</div>
+            <div class="stat-value" style="color:${totalRetorno >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+              ${totalRetorno >= 0 ? '+' : ''}${formatCurrency(totalRetorno)}
+            </div>
+            <div class="inv-pct-label" style="color:${totalRetornoPct >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+              ${totalRetornoPct >= 0 ? '+' : ''}${totalRetornoPct.toFixed(2)}%
+            </div>
+          </div>
+        </div>
+        <div class="stat-card stagger-3">
+          <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">🏦</div>
+          <div class="stat-content">
+            <div class="stat-label">Fundos</div>
+            <div class="stat-value">${funds.length}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Distribuição por Tipo -->
+      ${funds.length > 0 ? (() => {
+        const TIPOS = [
+          { key: 'Renda Fixa',   label: 'Renda Fixa',    color: '#3B82F6', match: c => /renda.?fixa/i.test(c) },
+          { key: 'Multimercado', label: 'Multimercado',  color: '#8B5CF6', match: c => /multimercado/i.test(c) },
+          { key: 'Ações',        label: 'Renda Variável',color: '#EF4444', match: c => /a[çc][oõ]es/i.test(c) },
+          { key: 'Alternativo',  label: 'Alternativo',   color: '#F97316', match: c => /cripto|fidc|alternativo/i.test(c) },
+        ];
+
+        // Agrupa por valor atual
+        const buckets = {};
+        TIPOS.forEach(t => { buckets[t.key] = 0; });
+        buckets['Outros'] = 0;
+
+        funds.forEach(f => {
+          const q       = quotas[normalizeCNPJ(f.cnpj)];
+          const qtd     = parseFloat(f.quotas) || 0;
+          const avg     = parseFloat(f.avgQuotaPrice) || 0;
+          const val     = q?.quota ? qtd * q.quota : qtd * avg;
+          const classe  = f.classe || '';
+          const tipo    = TIPOS.find(t => t.match(classe));
+          if (tipo) buckets[tipo.key] += val;
+          else      buckets['Outros']  += val;
+        });
+
+        const total = Object.values(buckets).reduce((s, v) => s + v, 0);
+        const rows  = [...TIPOS, { key: 'Outros', label: 'Outros', color: '#64748B' }]
+          .filter(t => buckets[t.key] > 0)
+          .map(t => {
+            const val = buckets[t.key];
+            const pct = total > 0 ? (val / total) * 100 : 0;
+            return `
+              <div style="margin-bottom:var(--space-3);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                  <span style="display:flex;align-items:center;gap:6px;font-size:var(--font-size-sm);">
+                    <span style="width:10px;height:10px;border-radius:50%;background:${t.color};display:inline-block;"></span>
+                    ${t.label}
+                  </span>
+                  <span style="display:flex;gap:var(--space-3);font-size:var(--font-size-xs);color:var(--color-gray-500);">
+                    <span>${formatCurrency(val)}</span>
+                    <span class="rf-legend-pct" style="background:${t.color}22;color:${t.color};">${pct.toFixed(1)}%</span>
+                  </span>
+                </div>
+                <div style="height:6px;background:var(--color-gray-100);border-radius:999px;overflow:hidden;">
+                  <div style="height:100%;width:${pct.toFixed(1)}%;background:${t.color};border-radius:999px;transition:width .4s;"></div>
+                </div>
+              </div>`;
+          }).join('');
+
+        return `
+          <div class="card animate-fade-in-up" style="margin-bottom:var(--space-5);">
+            <div class="card-header"><h3>Distribuição por Tipo</h3></div>
+            <div style="padding:var(--space-4) var(--space-5);">
+              ${rows || '<div style="color:var(--color-gray-400);font-size:var(--font-size-sm);">Sem dados suficientes.</div>'}
+            </div>
+          </div>`;
+      })() : ''}
+
+      <!-- Tabela -->
+      <div class="card">
+        <div class="card-header"><h3>Posição em Fundos</h3></div>
+        ${funds.length > 0 ? `
+        <div class="inv-table-wrapper">
+          <table class="inv-table">
+            <thead>
+              <tr>
+                <th>Fundo</th>
+                <th>Cotas</th>
+                <th>Cota Média</th>
+                <th>Cota Atual</th>
+                <th>Valor Atual</th>
+                <th>Rendimento</th>
+                <th>Atualizar Cota</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${funds.map(f => {
+                const cnpj      = normalizeCNPJ(f.cnpj);
+                const q         = quotas[cnpj];
+                const qtd       = parseFloat(f.quotas) || 0;
+                const avgPrice  = parseFloat(f.avgQuotaPrice) || 0;
+                const invested  = qtd * avgPrice;
+                const currQuota = q?.quota || null;
+                const current   = currQuota ? qtd * currQuota : invested;
+                const retBRL    = current - invested;
+                const retPct    = invested > 0 ? (retBRL / invested) * 100 : 0;
+                const cls       = classifyFund(f.classe);
+                const dateStr   = q?.date
+                  ? new Date(q.date + 'T12:00:00').toLocaleDateString('pt-BR')
+                  : '—';
+
+                return `
+                  <tr>
+                    <td>
+                      <div style="font-weight:var(--font-weight-medium);">${escapeHtml(f.name || cnpj)}</div>
+                      <div style="display:flex;gap:4px;align-items:center;margin-top:2px;flex-wrap:wrap;">
+                        <span class="inv-badge" style="background:${cls.color}22;color:${cls.color};">${cls.label}</span>
+                        <span style="font-size:10px;color:var(--color-gray-400);">${cnpj}</span>
+                      </div>
+                      ${f.manager ? `<div style="font-size:10px;color:var(--color-gray-400);margin-top:1px;">${escapeHtml(f.manager)}</div>` : ''}
+                    </td>
+                    <td>${qtd.toLocaleString('pt-BR', { maximumFractionDigits: 6 })}</td>
+                    <td style="color:var(--color-gray-600);">${formatCurrency(avgPrice)}</td>
+                    <td>
+                      ${currQuota
+                        ? `<div><strong>${formatCurrency(currQuota)}</strong></div>
+                           <div style="font-size:9px;color:var(--color-gray-400);">${dateStr}</div>`
+                        : `<span style="color:var(--color-warning-600);font-size:var(--font-size-xs);">— insira abaixo</span>`}
+                    </td>
+                    <td><strong>${formatCurrency(current)}</strong></td>
+                    <td>
+                      ${currQuota
+                        ? `<span style="color:${retBRL >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};font-weight:var(--font-weight-semibold);">
+                             ${retBRL >= 0 ? '+' : ''}${formatCurrency(retBRL)}
+                           </span>
+                           <div style="font-size:var(--font-size-xs);color:${retPct >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+                             ${retPct >= 0 ? '+' : ''}${retPct.toFixed(2)}%
+                           </div>`
+                        : '—'}
+                    </td>
+                    <td>
+                      <div style="display:flex;align-items:center;gap:4px;">
+                        <input type="number" class="form-control fund-quota-input" data-cnpj="${cnpj}"
+                          placeholder="Cota atual" step="0.000001" min="0"
+                          value="${currQuota || ''}"
+                          style="width:100px;padding:4px 6px;font-size:var(--font-size-xs);">
+                        <button class="btn btn-secondary btn-save-quota" data-cnpj="${cnpj}"
+                          style="padding:4px 8px;font-size:var(--font-size-xs);white-space:nowrap;">✓</button>
+                      </div>
+                    </td>
+                    <td>
+                      <div style="display:flex;gap:4px;align-items:center;">
+                        <button class="btn btn-primary btn-resgate-fund"
+                          data-id="${f.id}"
+                          data-invested="${invested}"
+                          data-current="${current}"
+                          data-quotas="${qtd}"
+                          style="padding:3px 8px;font-size:var(--font-size-xs);white-space:nowrap;">
+                          Resgatar
+                        </button>
+                        <button class="btn-icon edit-fund" data-id="${f.id}" data-name="${escapeHtml(f.name || cnpj)}" title="Editar nome">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                        <button class="btn-icon btn-danger delete-fund" data-id="${f.id}" title="Excluir">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>` : `
+        <div style="padding:var(--space-12);text-align:center;color:var(--color-gray-400);">
+          <div style="font-size:2rem;margin-bottom:var(--space-3);">🏦</div>
+          <div>Nenhum fundo cadastrado.</div>
+          <div style="font-size:var(--font-size-xs);margin-top:var(--space-2);">Clique em <strong>Adicionar</strong> no menu para cadastrar.</div>
+        </div>`}
+      </div>
+    </div>`;
+}
+
+function bindFundEvents() {
+  document.querySelectorAll('.btn-save-quota').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cnpj  = btn.dataset.cnpj;
+      const input = document.querySelector(`.fund-quota-input[data-cnpj="${cnpj}"]`);
+      const val   = parseFloat(input?.value);
+      if (!val || val <= 0) { showToast('Digite um valor de cota válido.', 'error'); return; }
+      saveManualQuota(cnpj, val, new Date().toISOString().split('T')[0]);
+      showToast('Cota atualizada!', 'success');
+      renderTabContent('fundos');
+    });
+  });
+
+  document.querySelectorAll('.fund-quota-input').forEach(input => {
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        input.closest('tr')?.querySelector('.btn-save-quota')?.click();
+      }
+    });
+  });
+
+  document.querySelectorAll('.edit-fund').forEach(btn => {
+    btn.addEventListener('click', () =>
+      openEditNameModal(btn.dataset.id, btn.dataset.name, updateInvestmentFund, 'fundos')
+    );
+  });
+
+  document.querySelectorAll('.btn-resgate-fund').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const fund = getInvestmentsFunds().find(f => f.id === btn.dataset.id);
+      if (!fund) return;
+      openFundRedemptionModal(
+        fund,
+        parseFloat(btn.dataset.invested),
+        parseFloat(btn.dataset.current),
+        parseFloat(btn.dataset.quotas)
+      );
+    });
+  });
+
+  document.querySelectorAll('.delete-fund').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('Excluir este fundo?')) return;
+      deleteInvestmentFund(btn.dataset.id);
+      renderTabContent('fundos');
+    });
+  });
+}
+
+// ── Tab: Dividendos ─────────────────────────────────────────────────────────
+
+// ── Wrapper RF com sub-abas ───────────────────────────────────────────────────
+
+function renderRFWithSubTabs(rf, redemptions, rates, amortConfirms, activeSubTab) {
+  const subTabBar = `
+    <div class="rv-subtab-bar">
+      <button class="rv-subtab ${activeSubTab === 'posicao' ? 'active' : ''}" data-rf-subtab="posicao">
+        📊 Posição
+      </button>
+      <button class="rv-subtab ${activeSubTab === 'amortizacoes' ? 'active' : ''}" data-rf-subtab="amortizacoes">
+        📅 Amortizações
+      </button>
+    </div>`;
+  const content = activeSubTab === 'amortizacoes'
+    ? renderAmortizacoesTab(rf, amortConfirms)
+    : renderRendaFixaTab(rf, redemptions, rates, amortConfirms);
+  return subTabBar + content;
+}
+
+function bindRFSubTabEvents() {
+  document.querySelectorAll('[data-rf-subtab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sessionStorage.setItem('rfSubTab', btn.dataset.rfSubtab);
+      renderTabContent('rf');
+    });
+  });
+}
+
+// ── Aba de Amortizações ───────────────────────────────────────────────────────
+
+function renderAmortizacoesTab(rf, amortConfirms) {
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
+  const thisYear = today.getFullYear();
+
+  const allEvents = [];
+  rf.filter(inv => inv.amortization?.firstDate).forEach(inv => {
+    getAmortizationSchedule(inv).forEach(p => {
+      const confirmed = amortConfirms.find(c => c.investmentId === inv.id && c.amortIndex === p.index);
+      const pDate     = new Date(p.date + 'T12:00:00');
+      allEvents.push({ inv, p, confirmed, pDate, isThisMonth: p.isThisMonth });
+    });
+  });
+
+  allEvents.sort((a, b) => a.pDate - b.pDate);
+
+  const upcoming = allEvents.filter(e => e.pDate >= today);
+  const past     = [...allEvents.filter(e => e.pDate < today)].reverse();
+
+  const totalRecebidoAno = past
+    .filter(e => e.confirmed && e.pDate.getFullYear() === thisYear)
+    .reduce((s, e) => s + (e.confirmed.actualAmount ?? e.p.amount), 0);
+
+  const totalProjetadoAno = allEvents
+    .filter(e => e.pDate.getFullYear() === thisYear)
+    .reduce((s, e) => s + e.p.amount, 0);
+
+  const totalFuturo = upcoming.reduce((s, e) => s + e.p.amount, 0);
+  const nextEvent   = upcoming[0];
+  const noTitles    = rf.filter(i => i.amortization).length === 0;
+
+  function rowHtml(e) {
+    const dateStr    = e.pDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' });
+    const isPast     = e.pDate < today;
+    const canConfirm = (isPast || e.isThisMonth) && !e.confirmed;
+
+    return `
+      <tr class="${e.confirmed ? 'div-row-confirmed' : ''} ${!isPast && !e.isThisMonth ? 'div-row-future' : ''}">
+        <td>
+          <strong>${escapeHtml(e.inv.name)}</strong>
+          ${e.isThisMonth ? '<span class="inv-amort-badge" style="margin-left:6px;">Este mês</span>' : ''}
+        </td>
+        <td style="white-space:nowrap;color:var(--color-gray-600);">${dateStr}</td>
+        <td style="color:var(--color-gray-500);">Parcela ${e.p.index + 1}</td>
+        <td><strong style="color:var(--color-success-600);">${formatCurrency(e.p.amount)}</strong></td>
+        <td>
+          ${e.confirmed
+            ? `<span class="div-badge-confirmed">✓ Recebido</span>
+               <button class="btn-link amort-unconfirm" data-id="${e.confirmed.id}"
+                 style="font-size:11px;color:var(--color-gray-400);display:block;margin-top:2px;">desfazer</button>`
+            : canConfirm
+              ? `<button class="btn-amort-confirm"
+                   data-inv-id="${e.inv.id}"
+                   data-inv-name="${escapeHtml(e.inv.name)}"
+                   data-index="${e.p.index}"
+                   data-amount="${e.p.amount}"
+                   data-date="${e.p.date}">
+                   ✓ Confirmar
+                 </button>`
+              : `<span style="color:var(--color-gray-400);font-size:var(--font-size-xs);">⏳ Aguardando</span>`
+          }
+        </td>
+      </tr>`;
+  }
+
+  if (noTitles) return `
+    <div class="animate-fade-in-up">
+      <div class="card" style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">
+        <div style="font-size:2rem;margin-bottom:var(--space-3);">📅</div>
+        <div>Nenhum título com amortização cadastrado.</div>
+        <div style="font-size:var(--font-size-xs);margin-top:var(--space-2);">
+          Cadastre um título de Renda Fixa e ative a opção de amortização.
+        </div>
+      </div>
+    </div>`;
+
+  return `
+    <div class="animate-fade-in-up">
+
+      <!-- Cards de resumo -->
+      <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">✅</div>
+          <div class="stat-content">
+            <div class="stat-label">Recebido em ${thisYear}</div>
+            <div class="stat-value" style="color:var(--color-success-600);">${formatCurrency(totalRecebidoAno)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-1">
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">📅</div>
+          <div class="stat-content">
+            <div class="stat-label">Previsto em ${thisYear}</div>
+            <div class="stat-value">${formatCurrency(totalProjetadoAno)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-2">
+          <div class="stat-icon" style="background:rgba(99,102,241,.1);color:#6366F1;">🔮</div>
+          <div class="stat-content">
+            <div class="stat-label">A receber (futuro)</div>
+            <div class="stat-value">${formatCurrency(totalFuturo)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-3">
+          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">⏭️</div>
+          <div class="stat-content">
+            <div class="stat-label">Próxima parcela</div>
+            <div class="stat-value" style="font-size:var(--font-size-lg);">
+              ${nextEvent ? nextEvent.pDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : '—'}
+            </div>
+            ${nextEvent ? `<div style="font-size:var(--font-size-xs);color:var(--color-success-600);margin-top:2px;">${formatCurrency(nextEvent.p.amount)}</div>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- Próximas -->
+      ${upcoming.length > 0 ? `
+      <div class="card" style="margin-bottom:var(--space-4);">
+        <div class="card-header">
+          <h3>📅 Próximas parcelas</h3>
+          <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${upcoming.length} parcela${upcoming.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="inv-table-wrapper">
+          <table class="inv-table">
+            <thead><tr><th>Título</th><th>Data</th><th>Parcela</th><th>Valor</th><th></th></tr></thead>
+            <tbody>${upcoming.map(rowHtml).join('')}</tbody>
+          </table>
+        </div>
+      </div>` : ''}
+
+      <!-- Histórico -->
+      ${past.length > 0 ? `
+      <div class="card">
+        <div class="card-header">
+          <h3>🕐 Histórico</h3>
+          <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${past.length} parcela${past.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="inv-table-wrapper">
+          <table class="inv-table">
+            <thead><tr><th>Título</th><th>Data</th><th>Parcela</th><th>Valor</th><th></th></tr></thead>
+            <tbody>${past.map(rowHtml).join('')}</tbody>
+          </table>
+        </div>
+      </div>` : ''}
+
+    </div>`;
+}
+
+function renderDividendosTab(rv, dividends, divConfirms) {
+  // Monta lista de todos os dividendos com info do investimento
+  const today    = new Date(); today.setHours(0,0,0,0);
+  const thisYear = today.getFullYear();
+
+  const rows = [];
+  rv.forEach(inv => {
+    const ticker = inv.ticker?.toUpperCase();
+    if (!ticker) return;
+    const qty  = parseFloat(inv.quantity) || 0;
+    const divs = dividends[ticker] || [];
+
+    // Ordena por data desc para pegar os mais recentes
+    const sorted = [...divs].sort((a, b) => {
+      const da = a.paymentDate ? new Date(a.paymentDate + 'T12:00:00') : new Date(0);
+      const db = b.paymentDate ? new Date(b.paymentDate + 'T12:00:00') : new Date(0);
+      return db - da;
+    });
+
+    // Próximo pagamento (data futura mais próxima)
+    const nextDiv  = sorted.find(d => d.paymentDate && new Date(d.paymentDate + 'T12:00:00') >= today);
+    // 2 pagamentos anteriores (data passada)
+    const pastDivs = sorted.filter(d => !d.paymentDate || new Date(d.paymentDate + 'T12:00:00') < today).slice(0, 2);
+
+    const selected = [];
+    if (nextDiv) selected.push(nextDiv);
+    selected.push(...pastDivs);
+
+    selected.forEach((d, idx) => {
+      const payDate = d.paymentDate ? new Date(d.paymentDate + 'T12:00:00') : null;
+      const total   = qty * (d.rate || 0);
+      const key     = `${ticker}_${d.paymentDate}`;
+      const confirmed = divConfirms.find(c => c.key === key);
+      rows.push({ inv, ticker, qty, d, payDate, total, key, confirmed });
+    });
+  });
+
+  // Ordena: futuros primeiro, depois mais recentes
+  rows.sort((a, b) => {
+    if (!a.payDate && !b.payDate) return 0;
+    if (!a.payDate) return 1;
+    if (!b.payDate) return -1;
+    return b.payDate - a.payDate;
+  });
+
+  // Separa futuros / anteriores
+  const upcoming = rows.filter(r => r.payDate && r.payDate >= today);
+  const past     = rows.filter(r => !r.payDate || r.payDate < today);
+
+  // Totais do ano
+  const totalAnoRecebido = past
+    .filter(r => r.payDate?.getFullYear() === thisYear && r.confirmed)
+    .reduce((s, r) => s + r.total, 0);
+  const totalAnoPrevisto = rows
+    .filter(r => r.payDate?.getFullYear() === thisYear)
+    .reduce((s, r) => s + r.total, 0);
+
+  const noData = rv.length === 0;
+  const noDivs = rows.length === 0 && !noData;
+
+  function rowHtml(r) {
+    const dateStr = r.payDate
+      ? r.payDate.toLocaleDateString('pt-BR', { day:'2-digit', month:'short', year:'numeric' })
+      : '—';
+    const isConfirmed = !!r.confirmed;
+    const isFuture    = r.payDate && r.payDate >= today;
+    return `
+      <tr class="${isConfirmed ? 'div-row-confirmed' : ''} ${isFuture ? 'div-row-future' : ''}">
+        <td>
+          <strong class="inv-ticker">${r.ticker}</strong>
+          <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${escapeHtml(r.inv.name)}</div>
+        </td>
+        <td><span class="inv-badge inv-badge-type">${escapeHtml(r.d.type)}</span></td>
+        <td style="font-weight:var(--font-weight-medium);">${dateStr}</td>
+        <td>${r.d.relatedTo || '—'}</td>
+        <td style="color:var(--color-gray-600);">${r.qty} × ${formatCurrency(r.d.rate)}</td>
+        <td><strong style="color:var(--color-success-600);">${formatCurrency(r.total)}</strong></td>
+        <td>
+          ${isConfirmed
+            ? `<span class="div-badge-confirmed">✓ Recebido</span>
+               <button class="btn-link div-unconfirm" data-id="${r.confirmed.id}" style="font-size:11px;color:var(--color-gray-400);display:block;margin-top:2px;">desfazer</button>`
+            : `<button class="btn-amort-confirm div-confirm"
+                 data-key="${r.key}"
+                 data-ticker="${r.ticker}"
+                 data-name="${escapeHtml(r.inv.name)}"
+                 data-total="${r.total.toFixed(2)}"
+                 data-date="${r.d.paymentDate || ''}"
+                 data-type="${escapeHtml(r.d.type)}"
+                 ${isFuture ? 'style="opacity:.6;"' : ''}>
+                 ${isFuture ? '⏳ Aguardando' : '✓ Confirmar'}
+               </button>`
+          }
+        </td>
+      </tr>`;
+  }
+
+  return `
+    <div class="animate-fade-in-up">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:var(--space-3);">
+        <button id="btn-refresh-dividends" style="background:none;border:1px solid var(--color-gray-200);border-radius:var(--radius-md);padding:4px 12px;font-size:var(--font-size-xs);color:var(--color-gray-500);cursor:pointer;display:flex;align-items:center;gap:4px;">
+          🔄 Atualizar dividendos
+        </button>
+      </div>
+      <!-- Cards resumo do ano -->
+      <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">💵</div>
+          <div class="stat-content">
+            <div class="stat-label">Recebido em ${thisYear}</div>
+            <div class="stat-value">${formatCurrency(totalAnoRecebido)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-1">
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">📅</div>
+          <div class="stat-content">
+            <div class="stat-label">Previsto em ${thisYear}</div>
+            <div class="stat-value">${formatCurrency(totalAnoPrevisto)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-2">
+          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">⏳</div>
+          <div class="stat-content">
+            <div class="stat-label">Próximos pagamentos</div>
+            <div class="stat-value">${upcoming.length}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-3">
+          <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">🏦</div>
+          <div class="stat-content">
+            <div class="stat-label">Ativos com dividendos</div>
+            <div class="stat-value">${Object.keys(dividends).filter(t => (dividends[t]||[]).length > 0).length}</div>
+          </div>
+        </div>
+      </div>
+
+      ${noData ? `<div class="card" style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">Cadastre ativos de Renda Variável para ver o histórico de dividendos.</div>` : ''}
+
+      ${noDivs ? `<div class="card" style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">
+        <div style="font-size:2rem;margin-bottom:var(--space-3);">📭</div>
+        <div>Nenhum dividendo encontrado para seus ativos. A BRAPI pode não ter dados para todos os tickers.</div>
+      </div>` : ''}
+
+      ${upcoming.length > 0 ? `
+      <div class="card" style="margin-bottom:var(--space-5);">
+        <div class="card-header">
+          <h3>📅 Próximos Pagamentos</h3>
+        </div>
+        <div class="inv-table-wrapper">
+          <table class="inv-table">
+            <thead><tr>
+              <th>Ativo</th><th>Tipo</th><th>Pagamento</th><th>Ref.</th><th>Qtde × Valor</th><th>Total</th><th></th>
+            </tr></thead>
+            <tbody>${upcoming.map(r => rowHtml(r)).join('')}</tbody>
+          </table>
+        </div>
+      </div>` : ''}
+
+      ${past.length > 0 ? `
+      <div class="card">
+        <div class="card-header">
+          <h3>📋 Histórico de Dividendos</h3>
+        </div>
+        <div class="inv-table-wrapper">
+          <table class="inv-table">
+            <thead><tr>
+              <th>Ativo</th><th>Tipo</th><th>Pagamento</th><th>Ref.</th><th>Qtde × Valor</th><th>Total</th><th></th>
+            </tr></thead>
+            <tbody>${past.map(r => rowHtml(r)).join('')}</tbody>
+          </table>
+        </div>
+      </div>` : ''}
+    </div>
+  `;
+}
+
+function bindDividendEvents() {
+  // Botão atualizar
+  document.getElementById('btn-refresh-dividends')?.addEventListener('click', () => {
+    localStorage.removeItem('fp_dividends_cache');
+    _dividends = null;
+    renderTabContent('dividendos');
+  });
+
+  // Confirmar recebimento
+  document.querySelectorAll('.div-confirm').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const { key, ticker, name, total, date, type } = btn.dataset;
+      const amount = parseFloat(total) || 0;
+
+      const bodyHtml = `
+        <div style="display:flex;flex-direction:column;gap:var(--space-4);">
+          <div style="background:var(--color-gray-50);border-radius:var(--radius-md);padding:var(--space-3);">
+            <div style="font-size:var(--font-size-sm);color:var(--color-gray-500);">Ativo</div>
+            <div style="font-weight:var(--font-weight-semibold);">${ticker} — ${escapeHtml(name)}</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);">
+            <div>
+              <label class="form-label">Valor recebido (R$)</label>
+              <input type="number" id="div-confirm-amount" class="form-control" value="${amount.toFixed(2)}" step="0.01" min="0">
+            </div>
+            <div>
+              <label class="form-label">Data do recebimento</label>
+              <input type="date" id="div-confirm-date" class="form-control" value="${date || new Date().toISOString().split('T')[0]}">
+            </div>
+          </div>
+          <div>
+            <label class="form-label">Observação (opcional)</label>
+            <input type="text" id="div-confirm-note" class="form-control" placeholder="${type}">
+          </div>
+        </div>
+      `;
+
+      openModal(
+        `Confirmar Recebimento — ${type}`,
+        bodyHtml,
+        `<button class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+         <button class="btn btn-primary" id="div-confirm-save">Confirmar</button>`
+      );
+
+      document.getElementById('div-confirm-save')?.addEventListener('click', () => {
+        const actualAmount = parseFloat(document.getElementById('div-confirm-amount')?.value) || amount;
+        const actualDate   = document.getElementById('div-confirm-date')?.value || date;
+        const note         = document.getElementById('div-confirm-note')?.value || type;
+
+        confirmDividend({ key, ticker, name, amount: actualAmount, date: actualDate, type, note });
+
+        addTransaction({
+          description: `Dividendo ${type} — ${ticker}`,
+          categoryId: 'cat_investimentos',
+          amount: actualAmount,
+          date: actualDate,
+          type: 'income',
+          note,
+          fromInvestment: true,
+        });
+
+        closeModal();
+        showToast(`${formatCurrency(actualAmount)} de dividendo confirmado e lançado em Movimentações!`, 'success');
+        renderTabContent('dividendos');
+      });
+    });
+  });
+
+  // Desfazer confirmação
+  document.querySelectorAll('.div-unconfirm').forEach(btn => {
+    btn.addEventListener('click', () => {
+      deleteDivConfirmation(btn.dataset.id);
+      showToast('Confirmação removida.', 'success');
+      renderTabContent('dividendos');
+    });
+  });
 }
 
 function buildRVChart(rv) {
@@ -1100,6 +2040,12 @@ function buildRVChart(rv) {
 }
 
 function bindRVDeleteEvents() {
+  document.querySelectorAll('.edit-rv').forEach(btn => {
+    btn.addEventListener('click', () =>
+      openEditNameModal(btn.dataset.id, btn.dataset.name, updateInvestmentRV, 'rv')
+    );
+  });
+
   document.querySelectorAll('.delete-rv').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!confirm('Excluir este ativo?')) return;
@@ -1114,12 +2060,17 @@ function bindRVDeleteEvents() {
 function renderFormularioTab() {
   const rf = getInvestmentsRF();
   const rv = getInvestmentsRV();
+  const funds = getInvestmentsFunds();
   const redemptions = getRedemptions();
 
-  // Lançamentos: entradas (RF+RV) e saídas (resgates) unificados
+  // Lançamentos: entradas (RF+RV+Fundo) e saídas (resgates) unificados
   const entries = [
     ...rf.map(i => ({ id: i.id, _kind: 'rf', _dir: 'entrada', name: i.name, ticker: '', assetType: null, returnType: i.returnType, indexer: i.indexer, percentage: i.percentage, rate: i.rate, sector: i.sector, value: i.value, date: i.applicationDate, createdAt: i.createdAt, maturityDate: i.maturityDate })),
     ...rv.map(i => ({ id: i.id, _kind: 'rv', _dir: 'entrada', name: i.name, ticker: i.ticker, assetType: i.assetType, sector: i.sector, value: i.value, date: i.createdAt?.split('T')[0], createdAt: i.createdAt })),
+    ...funds.map(f => {
+      const val = (parseFloat(f.quotas) || 0) * (parseFloat(f.avgQuotaPrice) || 0);
+      return { id: f.id, _kind: 'fundo', _dir: 'entrada', name: f.name, ticker: normalizeCNPJ(f.cnpj), assetType: null, sector: f.classe || '', value: val, date: f.applicationDate || f.createdAt?.split('T')[0], createdAt: f.createdAt };
+    }),
     ...redemptions.map(r => {
       const inv = r.investmentType === 'rf' ? rf.find(i => i.id === r.investmentId) : rv.find(i => i.id === r.investmentId);
       return { id: r.id, _kind: r.investmentType, _dir: 'saida', name: inv ? inv.name : 'Investimento removido', ticker: inv?.ticker || '', value: r.amount, date: r.date, createdAt: r.createdAt, note: r.note, _redemptionId: r.id };
@@ -1156,19 +2107,24 @@ function renderFormularioTab() {
             <tbody>
               ${entries.map(inv => {
                 const isSaida = inv._dir === 'saida';
-                const isRF = inv._kind === 'rf';
-                const icon = isSaida ? '🔴' : (isRF ? '🏦' : '📈');
+                const isRF    = inv._kind === 'rf';
+                const isFundo = inv._kind === 'fundo';
+                const icon = isSaida ? '🔴' : isRF ? '🏦' : isFundo ? '🏛️' : '📈';
                 const badge = isSaida
                   ? `<span class="inv-badge" style="background:var(--color-danger-50);color:var(--color-danger-600);">Resgate</span>`
                   : isRF
                     ? `<span class="inv-badge inv-badge-${inv.returnType}">${returnTypeLabel(inv)}</span>`
-                    : `<span class="inv-badge inv-badge-type">${ASSET_LABELS[inv.assetType] || inv.assetType}</span>`;
+                    : isFundo
+                      ? `<span class="inv-badge" style="background:#8B5CF622;color:#8B5CF6;">Fundo</span>`
+                      : `<span class="inv-badge inv-badge-type">${ASSET_LABELS[inv.assetType] || inv.assetType}</span>`;
                 const detail = isSaida
                   ? (inv.note || '—')
                   : isRF
                     ? `Vence ${formatDate(inv.maturityDate)}`
-                    : `${SECTOR_LABELS[inv.sector] || inv.sector || '—'}`;
-                const deleteClass = isSaida ? 'delete-launch-redemption' : isRF ? 'delete-launch-rf' : 'delete-launch-rv';
+                    : isFundo
+                      ? (inv.sector || '—')
+                      : `${SECTOR_LABELS[inv.sector] || inv.sector || '—'}`;
+                const deleteClass = isSaida ? 'delete-launch-redemption' : isRF ? 'delete-launch-rf' : isFundo ? 'delete-launch-fundo' : 'delete-launch-rv';
                 const deleteId = isSaida ? inv._redemptionId : inv.id;
 
                 return `
@@ -1233,6 +2189,14 @@ function renderRFFields() {
           <option value="global">🌎 Global</option>
         </select>
       </div>
+      <div class="form-group">
+        <label class="form-label">Categoria</label>
+        <select name="category" class="form-control">
+          <option value="bancario">🏦 Bancário (CDB, LCI, LCA)</option>
+          <option value="publico">🏛️ Título Público (Tesouro)</option>
+          <option value="privado">🏢 Crédito Privado (CRI, CRA, Debênture)</option>
+        </select>
+      </div>
     </div>
     <div class="form-row">
       <div class="form-group">
@@ -1244,6 +2208,15 @@ function renderRFFields() {
         <input type="date" name="maturityDate" class="form-control" required>
       </div>
     </div>
+    <div class="form-group">
+      <label class="form-label">Liquidez</label>
+      <div class="inv-return-toggle">
+        <button type="button" class="inv-return-btn active" data-liquidity="daily">💧 Diária</button>
+        <button type="button" class="inv-return-btn" data-liquidity="maturity">🔒 No vencimento</button>
+      </div>
+      <input type="hidden" name="liquidity" value="daily">
+    </div>
+
     <div class="form-group">
       <label class="form-label">Tipo de Rentabilidade</label>
       <div class="inv-return-toggle">
@@ -1432,6 +2405,15 @@ function bindFormEvents() {
     });
   });
 
+  document.querySelectorAll('.delete-launch-fundo').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('Excluir este fundo?')) return;
+      deleteInvestmentFund(btn.dataset.id);
+      _quotasFundos = null;
+      renderTabContent('formulario');
+    });
+  });
+
   document.querySelectorAll('.delete-launch-redemption').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!confirm('Excluir este resgate?')) return;
@@ -1446,6 +2428,7 @@ function openInvModal() {
     <div class="inv-toggle-group" style="margin-bottom:var(--space-5);">
       <button class="inv-toggle active" data-type="rf">🏦 Renda Fixa</button>
       <button class="inv-toggle" data-type="rv">📈 Renda Variável</button>
+      <button class="inv-toggle" data-type="fundo">🏛️ Fundo</button>
     </div>
     <form id="inv-form">
       <div id="inv-form-fields">${renderRFFields()}</div>
@@ -1467,8 +2450,10 @@ function openInvModal() {
       btn.classList.add('active');
       const fieldsEl = document.getElementById('inv-form-fields');
       if (!fieldsEl) return;
-      fieldsEl.innerHTML = btn.dataset.type === 'rf' ? renderRFFields() : renderRVFields();
-      if (btn.dataset.type === 'rf') bindReturnTypeEvents();
+      const type = btn.dataset.type;
+      if (type === 'rf')    { fieldsEl.innerHTML = renderRFFields();    bindReturnTypeEvents(); }
+      else if (type === 'rv') { fieldsEl.innerHTML = renderRVFields(); }
+      else                   { fieldsEl.innerHTML = renderFundFields(); }
     });
   });
 
@@ -1478,14 +2463,90 @@ function openInvModal() {
     const form = document.getElementById('inv-form');
     if (!form) return;
     const data = Object.fromEntries(new FormData(form));
-    data.formType === 'rf' ? handleAddRF(data) : handleAddRV(data);
+    if (data.formType === 'rf')    handleAddRF(data);
+    else if (data.formType === 'rv') handleAddRV(data);
+    else                            handleAddFund(data);
   });
 }
 
+function renderFundFields() {
+  return `
+    <input type="hidden" name="formType" value="fundo">
+    <div class="form-group">
+      <label class="form-label">CNPJ do Fundo *</label>
+      <input type="text" name="cnpj" class="form-control" placeholder="XX.XXX.XXX/XXXX-XX" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Nome do Fundo *</label>
+      <input type="text" name="name" class="form-control" placeholder="Ex: Inter Conservador FIF RF CP RL" required>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Classificação</label>
+        <select name="classe" class="form-control">
+          <option value="">Selecione...</option>
+          <option value="Renda Fixa">Renda Fixa</option>
+          <option value="Multimercado">Multimercado</option>
+          <option value="Ações">Ações</option>
+          <option value="Alternativo">Alternativo</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Gestor <span style="color:var(--color-gray-400);font-weight:normal;">(opcional)</span></label>
+        <input type="text" name="manager" class="form-control" placeholder="Ex: Inter DTVM">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Quantidade de Cotas *</label>
+        <input type="number" name="quotas" class="form-control" placeholder="0.000000" step="0.000001" min="0" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Preço Médio por Cota (R$) *</label>
+        <input type="number" name="avgQuotaPrice" class="form-control" placeholder="0.000000" step="0.000001" min="0" required>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Data de Aplicação</label>
+      <input type="date" name="applicationDate" class="form-control" value="${new Date().toISOString().split('T')[0]}">
+    </div>
+  `;
+}
+
+
+async function handleAddFund(data) {
+  if (!data.cnpj || !data.name || !data.quotas || !data.avgQuotaPrice) {
+    showToast('Preencha CNPJ, nome e quantidade de cotas.', 'error');
+    return;
+  }
+  addInvestmentFund({
+    cnpj:            normalizeCNPJ(data.cnpj),
+    name:            data.name.trim(),
+    classe:          data.classe || '',
+    manager:         data.manager || '',
+    quotas:          parseFloat(data.quotas) || 0,
+    avgQuotaPrice:   parseFloat(data.avgQuotaPrice) || 0,
+    applicationDate: data.applicationDate || '',
+  });
+  closeModal();
+  showToast('Fundo adicionado! Insira a cota atual na aba Fundos.', 'success');
+  renderTabContent('fundos');
+}
+
 function bindReturnTypeEvents() {
-  document.querySelectorAll('.inv-return-btn').forEach(btn => {
+  // Toggle liquidez
+  document.querySelectorAll('[data-liquidity]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.inv-return-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('[data-liquidity]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const liqInput = document.querySelector('[name="liquidity"]');
+      if (liqInput) liqInput.value = btn.dataset.liquidity;
+    });
+  });
+
+  document.querySelectorAll('.inv-return-btn[data-return]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.inv-return-btn[data-return]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       const rt = btn.dataset.return;
       const rtInput = document.querySelector('[name="returnType"]');
@@ -1550,6 +2611,8 @@ function handleAddRF(data) {
     percentage,
     indexer,
     geography: data.geography || 'brasil',
+    category:  data.category  || 'bancario',
+    liquidity: data.liquidity || 'maturity',
     amortization,
   });
   closeModal();
@@ -1576,69 +2639,308 @@ function handleAddRV(data) {
   renderTabContent('formulario');
 }
 
-// ── Resgates ──
+// ── Resgate de Fundos ────────────────────────────────────────────────────────
 
-function bindRedeemEvents(cls, type, redemptions) {
-  document.querySelectorAll('.' + cls).forEach(btn => {
-    btn.addEventListener('click', () => {
-      const id   = btn.dataset.id;
-      const name = btn.dataset.name;
-      const net  = parseFloat(btn.dataset.net);
-      openRedemptionModal(id, name, net, type, redemptions);
-    });
-  });
-}
-
-function openRedemptionModal(id, name, netVal, type, redemptions) {
+function openFundRedemptionModal(fund, invested, current, totalQuotas) {
   openModal(
-    'Registrar Resgate',
+    `Resgatar — ${escapeHtml(fund.name)}`,
     `<div class="form-group">
-       <label class="form-label">Investimento</label>
-       <div style="padding:var(--space-3);background:var(--color-gray-50);border-radius:var(--radius-md);font-weight:var(--font-weight-medium);">${escapeHtml(name)}</div>
+       <label class="form-label">Tipo de resgate</label>
+       <div style="display:flex;gap:8px;">
+         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 12px;border:1px solid var(--color-gray-200);border-radius:var(--radius-md);flex:1;">
+           <input type="radio" name="redeem-type" value="total" checked> Total
+         </label>
+         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 12px;border:1px solid var(--color-gray-200);border-radius:var(--radius-md);flex:1;">
+           <input type="radio" name="redeem-type" value="parcial"> Parcial
+         </label>
+       </div>
      </div>
-     <div class="form-group">
-       <label class="form-label">Saldo disponível</label>
-       <div style="padding:var(--space-3);background:var(--color-success-50);border-radius:var(--radius-md);color:var(--color-success-700);font-weight:var(--font-weight-semibold);">${formatCurrency(netVal)}</div>
+     <div id="partial-quotas-group" style="display:none;" class="form-group">
+       <label class="form-label">Cotas Resgatadas</label>
+       <input type="number" id="redeem-quotas" class="form-control"
+         placeholder="0.000000" step="0.000001" min="0.000001" max="${totalQuotas}">
+       <small style="color:var(--color-gray-500);">
+         Você tem ${totalQuotas.toLocaleString('pt-BR', { maximumFractionDigits: 6 })} cotas
+       </small>
      </div>
      <div class="form-row">
        <div class="form-group">
-         <label class="form-label">Valor do Resgate (R$) *</label>
-         <input type="number" id="redeem-amount" class="form-control" placeholder="0.00" step="0.01" min="0.01" max="${netVal}">
+         <label class="form-label">Valor Bruto Recebido (R$) *</label>
+         <input type="number" id="redeem-gross" class="form-control" placeholder="0,00" step="0.01" min="0.01">
        </div>
        <div class="form-group">
          <label class="form-label">Data do Resgate *</label>
          <input type="date" id="redeem-date" class="form-control" value="${new Date().toISOString().split('T')[0]}">
        </div>
-     </div>
-     <div class="form-group">
-       <label class="form-label">Observação (opcional)</label>
-       <input type="text" id="redeem-note" class="form-control" placeholder="Ex: Resgate parcial para emergência">
      </div>`,
     `<button type="button" class="btn btn-ghost" id="modal-cancel">Cancelar</button>
-     <button type="button" class="btn btn-danger" id="modal-redeem-save">Confirmar Resgate</button>`
+     <button type="button" class="btn btn-primary" id="fund-redeem-next">Próximo →</button>`
   );
 
-  document.getElementById('modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
 
-  document.getElementById('modal-redeem-save')?.addEventListener('click', () => {
-    const amount = parseFloat(document.getElementById('redeem-amount')?.value || '0');
-    const date   = document.getElementById('redeem-date')?.value || '';
-    const note   = document.getElementById('redeem-note')?.value?.trim() || '';
+  document.querySelectorAll('input[name="redeem-type"]').forEach(r => {
+    r.addEventListener('change', () => {
+      document.getElementById('partial-quotas-group').style.display =
+        r.value === 'parcial' && r.checked ? '' : 'none';
+    });
+  });
 
-    if (!amount || amount <= 0) { showToast('Informe um valor de resgate.', 'error'); return; }
-    if (amount > netVal)        { showToast(`Valor máximo: ${formatCurrency(netVal)}`, 'error'); return; }
-    if (!date)                  { showToast('Informe a data do resgate.', 'error'); return; }
+  document.getElementById('fund-redeem-next').addEventListener('click', () => {
+    const type  = document.querySelector('input[name="redeem-type"]:checked')?.value || 'total';
+    const gross = parseFloat(document.getElementById('redeem-gross')?.value || '0');
+    const date  = document.getElementById('redeem-date')?.value || '';
+    const quotasResgatadas = type === 'parcial'
+      ? parseFloat(document.getElementById('redeem-quotas')?.value || '0')
+      : totalQuotas;
 
-    addRedemption({ investmentId: id, investmentType: type, amount, date, note });
+    if (!gross || gross <= 0)    { showToast('Informe o valor bruto do resgate.', 'error'); return; }
+    if (!date)                   { showToast('Informe a data do resgate.', 'error'); return; }
+    if (type === 'parcial' && (!quotasResgatadas || quotasResgatadas <= 0))
+      { showToast('Informe as cotas resgatadas.', 'error'); return; }
+    if (type === 'parcial' && quotasResgatadas > totalQuotas)
+      { showToast(`Você tem apenas ${totalQuotas.toLocaleString('pt-BR', { maximumFractionDigits: 6 })} cotas.`, 'error'); return; }
 
-    // Lança receita em Movimentações automaticamente
+    openFundRedeemStep2(fund, invested, current, totalQuotas, gross, date, type, quotasResgatadas);
+  });
+}
+
+function openFundRedeemStep2(fund, invested, current, totalQuotas, gross, date, type, quotasResgatadas) {
+  const investedProp = type === 'parcial'
+    ? invested * (quotasResgatadas / totalQuotas)
+    : invested;
+
+  openModal(
+    'IR sobre o Resgate',
+    `<div style="background:var(--color-gray-50);border-radius:var(--radius-md);padding:var(--space-3);margin-bottom:var(--space-4);">
+       <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+         <span style="color:var(--color-gray-600);">Fundo</span>
+         <strong>${escapeHtml(fund.name)}</strong>
+       </div>
+       <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+         <span style="color:var(--color-gray-600);">Tipo</span>
+         <span>${type === 'total' ? 'Resgate Total' : `Parcial — ${quotasResgatadas.toLocaleString('pt-BR', { maximumFractionDigits: 6 })} cotas`}</span>
+       </div>
+       <div style="display:flex;justify-content:space-between;">
+         <span style="color:var(--color-gray-600);">Valor Bruto</span>
+         <strong style="color:var(--color-success-700);">${formatCurrency(gross)}</strong>
+       </div>
+     </div>
+     <div class="form-group">
+       <label class="form-label">IR retido na fonte (R$)</label>
+       <input type="number" id="redeem-ir" class="form-control" placeholder="0,00" step="0.01" min="0" value="0">
+       <small style="color:var(--color-gray-500);">Valor do IR informado no extrato da corretora. Pode ser 0.</small>
+     </div>
+     <div id="redeem-summary" style="margin-top:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--color-gray-200);"></div>`,
+    `<button type="button" class="btn btn-ghost" id="fund-redeem-back">← Voltar</button>
+     <button type="button" class="btn btn-danger" id="fund-redeem-confirm">Confirmar Resgate</button>`
+  );
+
+  function updateSummary() {
+    const ir     = Math.max(0, parseFloat(document.getElementById('redeem-ir')?.value || '0') || 0);
+    const net    = gross - ir;
+    const ret    = net - investedProp;
+    const retPct = investedProp > 0 ? (ret / investedProp) * 100 : 0;
+    const color  = ret >= 0 ? 'var(--color-success-700)' : 'var(--color-danger-700)';
+    document.getElementById('redeem-summary').innerHTML = `
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+        <span style="color:var(--color-gray-500);">− IR Retido</span>
+        <span style="color:var(--color-danger-600);">− ${formatCurrency(ir)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:var(--font-size-lg);font-weight:var(--font-weight-semibold);margin-bottom:8px;">
+        <span>Valor Líquido</span>
+        <span>${formatCurrency(net)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span style="color:var(--color-gray-500);">Rendimento Líquido</span>
+        <span style="color:${color};font-weight:var(--font-weight-semibold);">
+          ${ret >= 0 ? '+' : ''}${formatCurrency(ret)} (${ret >= 0 ? '+' : ''}${retPct.toFixed(2)}%)
+        </span>
+      </div>`;
+  }
+
+  updateSummary();
+  document.getElementById('redeem-ir').addEventListener('input', updateSummary);
+
+  document.getElementById('fund-redeem-back').addEventListener('click', () =>
+    openFundRedemptionModal(fund, invested, current, totalQuotas)
+  );
+
+  document.getElementById('fund-redeem-confirm').addEventListener('click', () => {
+    const ir  = Math.max(0, parseFloat(document.getElementById('redeem-ir')?.value || '0') || 0);
+    const net = gross - ir;
+
+    if (type === 'total') {
+      deleteInvestmentFund(fund.id);
+    } else {
+      updateInvestmentFund(fund.id, { quotas: totalQuotas - quotasResgatadas });
+    }
+
     addTransaction({
-      description: `Resgate — ${name}`,
-      amount,
+      description: `Resgate ${type === 'total' ? 'total' : 'parcial'} — ${fund.name}`,
+      amount: net,
       date,
       type: 'income',
       categoryId: 'cat_investimentos',
-      note: note || '',
+      note: ir > 0
+        ? `Bruto: ${formatCurrency(gross)} | IR: ${formatCurrency(ir)}`
+        : `Bruto: ${formatCurrency(gross)}`,
+      fromInvestment: true,
+    });
+
+    closeModal();
+    showToast('Resgate registrado e lançado em Movimentações!', 'success');
+    renderTabContent('fundos');
+  });
+}
+
+// ── Resgates ──
+
+function bindRedeemEvents(cls, type, redemptions) {
+  document.querySelectorAll('.' + cls).forEach(btn => {
+    btn.addEventListener('click', () => {
+      openRedemptionModal({
+        id:       btn.dataset.id,
+        name:     btn.dataset.name,
+        invested: parseFloat(btn.dataset.invested || btn.dataset.net),
+        current:  parseFloat(btn.dataset.current  || btn.dataset.net),
+        type,
+        redemptions,
+      });
+    });
+  });
+}
+
+function openRedemptionModal({ id, name, invested, current, type, redemptions }) {
+  const isRV       = type === 'rv';
+  const actionWord = isRV ? 'Vender' : 'Resgatar';
+
+  openModal(
+    `${actionWord} — ${escapeHtml(name)}`,
+    `<div class="form-group">
+       <label class="form-label">Tipo</label>
+       <div style="display:flex;gap:8px;">
+         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 12px;border:1px solid var(--color-gray-200);border-radius:var(--radius-md);flex:1;">
+           <input type="radio" name="redeem-type" value="total" checked> ${isRV ? 'Vender tudo' : 'Total'}
+         </label>
+         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:8px 12px;border:1px solid var(--color-gray-200);border-radius:var(--radius-md);flex:1;">
+           <input type="radio" name="redeem-type" value="parcial"> Parcial
+         </label>
+       </div>
+     </div>
+     <div class="form-row">
+       <div class="form-group">
+         <label class="form-label">Valor Bruto Recebido (R$) *</label>
+         <input type="number" id="redeem-gross" class="form-control"
+           placeholder="0,00" step="0.01" min="0.01" value="${current.toFixed(2)}">
+       </div>
+       <div class="form-group">
+         <label class="form-label">Data *</label>
+         <input type="date" id="redeem-date" class="form-control" value="${new Date().toISOString().split('T')[0]}">
+       </div>
+     </div>`,
+    `<button type="button" class="btn btn-ghost" id="modal-cancel">Cancelar</button>
+     <button type="button" class="btn btn-primary" id="redeem-next">Próximo →</button>`
+  );
+
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+
+  document.querySelectorAll('input[name="redeem-type"]').forEach(r => {
+    r.addEventListener('change', () => {
+      if (r.value === 'total' && r.checked)
+        document.getElementById('redeem-gross').value = current.toFixed(2);
+    });
+  });
+
+  document.getElementById('redeem-next').addEventListener('click', () => {
+    const redeemType = document.querySelector('input[name="redeem-type"]:checked')?.value || 'total';
+    const gross      = parseFloat(document.getElementById('redeem-gross')?.value || '0');
+    const date       = document.getElementById('redeem-date')?.value || '';
+
+    if (!gross || gross <= 0) { showToast('Informe o valor bruto.', 'error'); return; }
+    if (!date)                { showToast('Informe a data.', 'error'); return; }
+
+    const investedProp = redeemType === 'total' || current <= 0
+      ? invested
+      : invested * (gross / current);
+
+    openRedemptionModalStep2({ id, name, invested, current, gross, date, redeemType, investedProp, type, redemptions });
+  });
+}
+
+function openRedemptionModalStep2({ id, name, invested, current, gross, date, redeemType, investedProp, type, redemptions }) {
+  const isRV = type === 'rv';
+
+  openModal(
+    'IR sobre o Resgate',
+    `<div style="background:var(--color-gray-50);border-radius:var(--radius-md);padding:var(--space-3);margin-bottom:var(--space-4);">
+       <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+         <span style="color:var(--color-gray-600);">Investimento</span>
+         <strong>${escapeHtml(name)}</strong>
+       </div>
+       <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+         <span style="color:var(--color-gray-600);">Tipo</span>
+         <span>${redeemType === 'total' ? (isRV ? 'Venda Total' : 'Resgate Total') : (isRV ? 'Venda Parcial' : 'Resgate Parcial')}</span>
+       </div>
+       <div style="display:flex;justify-content:space-between;">
+         <span style="color:var(--color-gray-600);">Valor Bruto</span>
+         <strong style="color:var(--color-success-700);">${formatCurrency(gross)}</strong>
+       </div>
+     </div>
+     <div class="form-group">
+       <label class="form-label">IR retido na fonte (R$)</label>
+       <input type="number" id="redeem-ir" class="form-control" placeholder="0,00" step="0.01" min="0" value="0">
+       <small style="color:var(--color-gray-500);">Valor do IR informado no extrato da corretora. Pode ser 0.</small>
+     </div>
+     <div id="redeem-summary" style="margin-top:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--color-gray-200);"></div>`,
+    `<button type="button" class="btn btn-ghost" id="redeem-back">← Voltar</button>
+     <button type="button" class="btn btn-danger" id="redeem-confirm">Confirmar</button>`
+  );
+
+  function updateSummary() {
+    const ir     = Math.max(0, parseFloat(document.getElementById('redeem-ir')?.value || '0') || 0);
+    const net    = gross - ir;
+    const ret    = net - investedProp;
+    const retPct = investedProp > 0 ? (ret / investedProp) * 100 : 0;
+    const color  = ret >= 0 ? 'var(--color-success-700)' : 'var(--color-danger-700)';
+    document.getElementById('redeem-summary').innerHTML = `
+      <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+        <span style="color:var(--color-gray-500);">− IR Retido</span>
+        <span style="color:var(--color-danger-600);">− ${formatCurrency(ir)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:var(--font-size-lg);font-weight:var(--font-weight-semibold);margin-bottom:8px;">
+        <span>Valor Líquido</span>
+        <span>${formatCurrency(net)}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span style="color:var(--color-gray-500);">Rendimento Líquido</span>
+        <span style="color:${color};font-weight:var(--font-weight-semibold);">
+          ${ret >= 0 ? '+' : ''}${formatCurrency(ret)} (${ret >= 0 ? '+' : ''}${retPct.toFixed(2)}%)
+        </span>
+      </div>`;
+  }
+
+  updateSummary();
+  document.getElementById('redeem-ir').addEventListener('input', updateSummary);
+
+  document.getElementById('redeem-back').addEventListener('click', () =>
+    openRedemptionModal({ id, name, invested, current, type, redemptions })
+  );
+
+  document.getElementById('redeem-confirm').addEventListener('click', () => {
+    const ir  = Math.max(0, parseFloat(document.getElementById('redeem-ir')?.value || '0') || 0);
+    const net = gross - ir;
+
+    addRedemption({ investmentId: id, investmentType: type, amount: gross, date,
+      note: ir > 0 ? `IR: ${formatCurrency(ir)}` : '' });
+
+    addTransaction({
+      description: `${redeemType === 'total' ? (isRV ? 'Venda total' : 'Resgate total') : (isRV ? 'Venda parcial' : 'Resgate parcial')} — ${name}`,
+      amount: net,
+      date,
+      type: 'income',
+      categoryId: 'cat_investimentos',
+      note: ir > 0 ? `Bruto: ${formatCurrency(gross)} | IR: ${formatCurrency(ir)}` : `Bruto: ${formatCurrency(gross)}`,
       fromInvestment: true,
     });
 
@@ -1646,6 +2948,39 @@ function openRedemptionModal(id, name, netVal, type, redemptions) {
     showToast('Resgate registrado e lançado em Movimentações!', 'success');
     renderTabContent(type === 'rf' ? 'rf' : 'rv');
   });
+}
+
+// ── Editar Nome ──────────────────────────────────────────────────────────────
+
+function openEditNameModal(id, currentName, updateFn, tab) {
+  openModal(
+    'Editar Nome',
+    `<div class="form-group">
+       <label class="form-label">Nome</label>
+       <input type="text" id="edit-name-input" class="form-control"
+         value="${escapeHtml(currentName)}" placeholder="Nome do investimento">
+     </div>`,
+    `<button type="button" class="btn btn-ghost" id="modal-cancel">Cancelar</button>
+     <button type="button" class="btn btn-primary" id="edit-name-save">Salvar</button>`
+  );
+
+  const input = document.getElementById('edit-name-input');
+  input.focus();
+  input.select();
+
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+
+  const save = () => {
+    const newName = input.value.trim();
+    if (!newName) { showToast('Nome não pode ser vazio.', 'error'); return; }
+    updateFn(id, { name: newName });
+    closeModal();
+    showToast('Nome atualizado!', 'success');
+    renderTabContent(tab);
+  };
+
+  document.getElementById('edit-name-save').addEventListener('click', save);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
 }
 
 // ── Helpers ──

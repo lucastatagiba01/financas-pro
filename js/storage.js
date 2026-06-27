@@ -353,6 +353,56 @@ export function deleteAmortConfirmation(id) {
   setStore(AMORT_CONFIRM_KEY, (getStore(AMORT_CONFIRM_KEY) || []).filter(c => c.id !== id));
 }
 
+// ── Investment Funds ──
+const INV_FUNDS_KEY = 'fp_inv_funds';
+
+export function getInvestmentsFunds() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return (getStore(INV_FUNDS_KEY) || []).filter(i => i.userId === user.id);
+}
+
+export function addInvestmentFund(fund) {
+  const all  = getStore(INV_FUNDS_KEY) || [];
+  const user = getCurrentUser();
+  const newF = { ...fund, id: generateId(), userId: user.id, createdAt: new Date().toISOString() };
+  all.push(newF);
+  setStore(INV_FUNDS_KEY, all);
+  return newF;
+}
+
+export function updateInvestmentFund(id, updates) {
+  const all = getStore(INV_FUNDS_KEY) || [];
+  const idx = all.findIndex(i => i.id === id);
+  if (idx !== -1) { all[idx] = { ...all[idx], ...updates }; setStore(INV_FUNDS_KEY, all); }
+}
+
+export function deleteInvestmentFund(id) {
+  setStore(INV_FUNDS_KEY, (getStore(INV_FUNDS_KEY) || []).filter(i => i.id !== id));
+}
+
+// ── Dividend Confirmations ──
+const DIV_CONFIRM_KEY = 'fp_div_confirmations';
+
+export function getDivConfirmations() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return (getStore(DIV_CONFIRM_KEY) || []).filter(c => c.userId === user.id);
+}
+
+export function confirmDividend(record) {
+  const all  = getStore(DIV_CONFIRM_KEY) || [];
+  const user = getCurrentUser();
+  const newC = { ...record, id: generateId(), userId: user.id, confirmedAt: new Date().toISOString() };
+  all.push(newC);
+  setStore(DIV_CONFIRM_KEY, all);
+  return newC;
+}
+
+export function deleteDivConfirmation(id) {
+  setStore(DIV_CONFIRM_KEY, (getStore(DIV_CONFIRM_KEY) || []).filter(c => c.id !== id));
+}
+
 // ── Selected Mode (FINANCIAL or INVESTMENTS) ──
 export function setSelectedMode(mode) {
   const validModes = ['FINANCIAL', 'INVESTMENTS'];

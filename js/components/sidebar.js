@@ -20,6 +20,7 @@ const NAV_ITEMS_INVESTMENTS = [
   { path: '/investments', label: 'Minha Carteira', icon: 'wallet',      tab: 'carteira'   },
   { path: '/investments', label: 'Renda Fixa',     icon: 'balance',     tab: 'rf',         sub: true },
   { path: '/investments', label: 'Renda Variável', icon: 'trendingUp',  tab: 'rv',         sub: true },
+  { path: '/investments', label: 'Fundos',          icon: 'balance',     tab: 'fundos',     sub: true },
   { path: '/investments', label: 'Adicionar',      icon: 'plus',        tab: 'formulario', sub: true },
 ];
 
