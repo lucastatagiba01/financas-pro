@@ -13,7 +13,7 @@ import {
   getRedemptions, addRedemption, deleteRedemption,
   getAmortConfirmations, confirmAmortization, deleteAmortConfirmation,
   getDivConfirmations, confirmDividend, deleteDivConfirmation,
-  addTransaction,
+  addTransaction, getTransactions,
 } from '../storage.js';
 import { renderSidebar, bindSidebarEvents } from '../components/sidebar.js';
 import { renderHeader, bindHeaderEvents } from '../components/header.js';
@@ -1637,9 +1637,23 @@ function renderHistoricoTab(rf, rv, funds, redemptions) {
   const today    = new Date(); today.setHours(0, 0, 0, 0);
   const thisYear = today.getFullYear();
 
-  // Mapa de nomes por id para fallback em resgates antigos
+  // Mapa de nomes: ativos ainda existentes
   const nameMap = {};
   [...rf, ...rv, ...funds].forEach(i => { nameMap[i.id] = i.name || i.ticker || i.cnpj; });
+
+  // Fallback para resgates antigos (sem investmentName): recupera da descrição da transação
+  // Formato salvo: "Resgate total — NomeDoAtivo" ou "Resgate — NomeDoAtivo"
+  const txNameMap = {};
+  getTransactions()
+    .filter(t => t.fromInvestment && t.description)
+    .forEach(t => {
+      const m = t.description.match(/—\s+(.+)$/);
+      if (m) {
+        // Indexa por data+valor para cruzar com o resgate
+        const key = `${t.date}_${Math.round((t.amount || 0) * 100)}`;
+        txNameMap[key] = m[1].trim();
+      }
+    });
 
   const TYPE_LABEL = { rf: 'Renda Fixa', rv: 'Renda Variável', fundo: 'Fundo' };
   const TYPE_COLOR = { rf: '#3B82F6', rv: '#EF4444', fundo: '#8B5CF6' };
@@ -1719,11 +1733,15 @@ function renderHistoricoTab(rf, rv, funds, redemptions) {
             </thead>
             <tbody>
               ${sorted.map(r => {
-                const name    = r.investmentName || nameMap[r.investmentId] || r.investmentId;
-                const typeStr = TYPE_LABEL[r.investmentType] || r.investmentType || '—';
-                const color   = TYPE_COLOR[r.investmentType] || '#64748B';
                 const ir      = r.irAmount  ?? 0;
                 const net     = r.netAmount ?? (r.amount - ir);
+                const txKey   = `${r.date}_${Math.round((net) * 100)}`;
+                const name    = r.investmentName
+                  || nameMap[r.investmentId]
+                  || txNameMap[txKey]
+                  || 'Ativo encerrado';
+                const typeStr = TYPE_LABEL[r.investmentType] || r.investmentType || '—';
+                const color   = TYPE_COLOR[r.investmentType] || '#64748B';
                 const dateStr = r.date
                   ? new Date(r.date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
                   : '—';
