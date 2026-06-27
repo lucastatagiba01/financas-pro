@@ -2047,24 +2047,49 @@
 }
 
 .evo-summary {
-  width: 200px;
+  width: 172px;
   flex-shrink: 0;
-  background: linear-gradient(160deg, var(--color-gray-50) 0%, #f0f4ff 100%);
   border: 1px solid var(--color-gray-200);
   border-radius: var(--radius-lg);
-  padding: var(--space-4);
+  overflow: hidden;
   font-size: var(--font-size-sm);
 }
 
+.evo-summary-header {
+  background: var(--color-blue-50);
+  border-bottom: 1px solid var(--color-blue-100);
+  padding: var(--space-4) var(--space-4) var(--space-3);
+}
+
 .evo-summary-month {
+  font-size: 10px;
   font-weight: var(--font-weight-bold);
-  color: var(--color-blue-700);
-  margin-bottom: var(--space-3);
-  font-size: var(--font-size-xs);
+  color: var(--color-blue-600);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--color-gray-200);
+  letter-spacing: 0.08em;
+  margin-bottom: var(--space-2);
+}
+
+.evo-summary-value {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-gray-900);
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.evo-summary-sublabel {
+  font-size: 10px;
+  color: var(--color-gray-400);
+  margin-top: var(--space-1);
+}
+
+.evo-summary-body {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-white);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .evo-row {
@@ -2072,7 +2097,6 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  padding: 3px 0;
 }
 
 .evo-row-label {
@@ -2086,11 +2110,13 @@
 }
 
 .evo-hint {
-  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-3);
   font-size: 10px;
   color: var(--color-gray-400);
   text-align: center;
   font-style: italic;
+  background: var(--color-white);
+  border-top: 1px solid var(--color-gray-100);
 }
 
 /* 3-column override for carteira stat grid */
