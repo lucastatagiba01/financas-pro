@@ -180,6 +180,35 @@ export function calcCurrentValueRF(principal, inv, rates) {
 }
 
 /**
+ * Igual calcCurrentValueRF mas para uma data de referência arbitrária (histórico)
+ */
+export function calcValueRFAtDate(principal, inv, rates, refDate) {
+  const start = new Date(inv.applicationDate + 'T00:00:00');
+  const ref   = new Date(refDate);
+  const days  = Math.max(0, Math.floor((ref - start) / (1000 * 60 * 60 * 24)));
+  if (days <= 0 || principal <= 0) return principal;
+
+  let annualRate = 0;
+  switch (inv.returnType) {
+    case 'pre':    annualRate = parseFloat(inv.preRate) || 0; break;
+    case 'pos': {
+      const indexer = inv.posIndexer || inv.indexer || 'CDI';
+      const pct     = parseFloat(inv.posPercentage ?? inv.percentage) || 100;
+      annualRate    = (pct / 100) * getBaseRate(indexer, rates);
+      break;
+    }
+    case 'hybrid': {
+      const indexer  = inv.hybridIndexer || inv.indexer || 'IPCA';
+      const spread   = parseFloat(inv.hybridRate ?? inv.rate) || 0;
+      annualRate     = getBaseRate(indexer, rates) + spread;
+      break;
+    }
+    default: return principal;
+  }
+  return principal * Math.pow(1 + annualRate / 100, days / 365);
+}
+
+/**
  * Calcula rendimento R$ e % em relação ao principal
  */
 export function calcReturn(principal, currentValue) {

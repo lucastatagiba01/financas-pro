@@ -3,7 +3,7 @@
 // ============================================
 
 import { formatCurrency, formatDate, escapeHtml, icons } from '../utils.js';
-import { getRates, calcCurrentValueRF, calcReturn, formatRateLabel, daysSince } from '../services/rates.js';
+import { getRates, calcCurrentValueRF, calcValueRFAtDate, calcReturn, formatRateLabel, daysSince } from '../services/rates.js';
 import { getQuotes, getLastUpdateTime, calcRVReturn, getDividends } from '../services/quotes.js';
 import { getFundInfo, classifyFund, normalizeCNPJ, getManualQuotas, saveManualQuota, clearFundQuotaCache } from '../services/funds.js';
 import {
@@ -17,7 +17,7 @@ import {
 } from '../storage.js';
 import { renderSidebar, bindSidebarEvents } from '../components/sidebar.js';
 import { renderHeader, bindHeaderEvents } from '../components/header.js';
-import { createDoughnutChart, destroyAllCharts } from '../components/charts.js';
+import { createDoughnutChart, createLineChart, destroyAllCharts } from '../components/charts.js';
 import { showToast } from '../components/toast.js';
 import { openModal, closeModal } from '../components/modal.js';
 
@@ -485,6 +485,17 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
         ` : `<div class="empty-state" style="padding:var(--space-6);">${posicoes.length > 0 ? 'Nenhuma posição encontrada.' : 'Nenhuma posição cadastrada ainda.'}</div>`}
       </div>
     </div>
+
+    <!-- Evolução Patrimonial -->
+    <div class="card" style="margin-top:var(--space-5);">
+      <div class="card-header">
+        <h3>📈 Evolução Patrimonial</h3>
+        <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Últimos 12 meses · RF estimada com taxa atual · RV e Fundos pelo custo de aquisição</span>
+      </div>
+      <div style="height:260px;padding:var(--space-4);">
+        <canvas id="chart-evolution"></canvas>
+      </div>
+    </div>
   `;
 }
 
@@ -522,6 +533,72 @@ function buildCarteiraCharts(rf, rv, redemptions = []) {
   if (brasil > 0) { geoL.push('Brasil'); geoD.push(brasil); geoC.push('#3B82F6'); }
   if (global > 0) { geoL.push('Global'); geoD.push(global); geoC.push('#22C55E'); }
   if (geoL.length) createDoughnutChart('chart-geo', geoL, geoD, geoC);
+
+  const funds = getInvestmentsFunds();
+  buildEvolutionChart(rf, rv, funds, redemptions, _rates || {});
+}
+
+function buildEvolutionChart(rf, rv, funds, redemptions, rates) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  // Últimos 12 meses + hoje
+  const points = [];
+  for (let i = 11; i >= 0; i--) {
+    points.push(new Date(today.getFullYear(), today.getMonth() - i, 1));
+  }
+  points.push(today);
+
+  const labels = points.map(d =>
+    d.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })
+  );
+
+  function redeemedBefore(invId, refDate) {
+    return redemptions
+      .filter(r => r.investmentId === invId && r.date && new Date(r.date + 'T00:00:00') <= refDate)
+      .reduce((s, r) => s + (r.amount || 0), 0);
+  }
+
+  const aportadoData = points.map(ref => {
+    let total = 0;
+    rf.forEach(inv => {
+      if (new Date(inv.applicationDate + 'T00:00:00') > ref) return;
+      total += Math.max(0, inv.value - redeemedBefore(inv.id, ref));
+    });
+    rv.forEach(inv => {
+      if (inv.applicationDate && new Date(inv.applicationDate + 'T00:00:00') > ref) return;
+      total += Math.max(0, (inv.quantity || 0) * (inv.avgPrice || 0) - redeemedBefore(inv.id, ref));
+    });
+    funds.forEach(f => {
+      if (f.applicationDate && new Date(f.applicationDate + 'T00:00:00') > ref) return;
+      total += Math.max(0, (parseFloat(f.quotas) || 0) * (parseFloat(f.avgQuotaPrice) || 0) - redeemedBefore(f.id, ref));
+    });
+    return Math.max(0, total);
+  });
+
+  const estimadoData = points.map((ref, idx) => {
+    const isToday = idx === points.length - 1;
+    let total = 0;
+    rf.forEach(inv => {
+      if (new Date(inv.applicationDate + 'T00:00:00') > ref) return;
+      const nv = Math.max(0, inv.value - redeemedBefore(inv.id, ref));
+      total += isToday ? calcCurrentValueRF(nv, inv, rates) : calcValueRFAtDate(nv, inv, rates, ref);
+    });
+    rv.forEach(inv => {
+      if (inv.applicationDate && new Date(inv.applicationDate + 'T00:00:00') > ref) return;
+      total += Math.max(0, (inv.quantity || 0) * (inv.avgPrice || 0) - redeemedBefore(inv.id, ref));
+    });
+    funds.forEach(f => {
+      if (f.applicationDate && new Date(f.applicationDate + 'T00:00:00') > ref) return;
+      total += Math.max(0, (parseFloat(f.quotas) || 0) * (parseFloat(f.avgQuotaPrice) || 0) - redeemedBefore(f.id, ref));
+    });
+    return Math.max(0, total);
+  });
+
+  const hasRF = rf.some(i => i.returnType);
+  createLineChart('chart-evolution', labels, [
+    { label: 'Capital Investido', data: aportadoData, color: '#94A3B8', fill: false },
+    ...(hasRF ? [{ label: 'Valor Estimado', data: estimadoData, color: '#3B82F6', fill: true }] : []),
+  ]);
 }
 
 // ── Tab 2: Renda Fixa ──
