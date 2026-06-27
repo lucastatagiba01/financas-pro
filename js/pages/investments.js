@@ -95,11 +95,21 @@ async function renderTabContent(tab) {
 
   switch (tab) {
     case 'carteira':
-      container.innerHTML = renderCarteiraTab(rf, rv, redemptions, rates, amortConfirms);
-      buildCarteiraCharts(rf, rv, redemptions);
-      bindCarteiraFilterEvents(rf, rv, redemptions);
-      bindAmortConfirmEvents();
+    case 'historico': {
+      const carteiraSubTab = tab === 'historico' ? 'historico' : (sessionStorage.getItem('carteiraSubTab') || 'visaogeral');
+      sessionStorage.setItem('carteiraSubTab', carteiraSubTab);
+      const funds = getInvestmentsFunds();
+      container.innerHTML = renderCarteiraWithSubTabs(rf, rv, funds, redemptions, rates, amortConfirms, carteiraSubTab);
+      if (carteiraSubTab === 'visaogeral') {
+        buildCarteiraCharts(rf, rv, redemptions);
+        bindCarteiraFilterEvents(rf, rv, redemptions);
+        bindAmortConfirmEvents();
+      } else {
+        bindHistoricoEvents();
+      }
+      bindCarteiraSubTabEvents();
       break;
+    }
     case 'rf':
     case 'amortizacoes': {
       const rfSubTab = tab === 'amortizacoes' ? 'amortizacoes' : (sessionStorage.getItem('rfSubTab') || 'posicao');
@@ -1594,6 +1604,170 @@ function bindFundEvents() {
 
 // ── Tab: Dividendos ─────────────────────────────────────────────────────────
 
+// ── Wrapper Carteira com sub-abas ────────────────────────────────────────────
+
+function renderCarteiraWithSubTabs(rf, rv, funds, redemptions, rates, amortConfirms, activeSubTab) {
+  const subTabBar = `
+    <div class="rv-subtab-bar">
+      <button class="rv-subtab ${activeSubTab === 'visaogeral' ? 'active' : ''}" data-carteira-subtab="visaogeral">
+        📊 Visão Geral
+      </button>
+      <button class="rv-subtab ${activeSubTab === 'historico' ? 'active' : ''}" data-carteira-subtab="historico">
+        🕐 Histórico de Resgates
+      </button>
+    </div>`;
+  const content = activeSubTab === 'historico'
+    ? renderHistoricoTab(rf, rv, funds, redemptions)
+    : renderCarteiraTab(rf, rv, redemptions, rates, amortConfirms);
+  return subTabBar + content;
+}
+
+function bindCarteiraSubTabEvents() {
+  document.querySelectorAll('[data-carteira-subtab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sessionStorage.setItem('carteiraSubTab', btn.dataset.carteiraSubtab);
+      renderTabContent('carteira');
+    });
+  });
+}
+
+// ── Histórico de Resgates ─────────────────────────────────────────────────────
+
+function renderHistoricoTab(rf, rv, funds, redemptions) {
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
+  const thisYear = today.getFullYear();
+
+  // Mapa de nomes por id para fallback em resgates antigos
+  const nameMap = {};
+  [...rf, ...rv, ...funds].forEach(i => { nameMap[i.id] = i.name || i.ticker || i.cnpj; });
+
+  const TYPE_LABEL = { rf: 'Renda Fixa', rv: 'Renda Variável', fundo: 'Fundo' };
+  const TYPE_COLOR = { rf: '#3B82F6', rv: '#EF4444', fundo: '#8B5CF6' };
+
+  const sorted = [...redemptions].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const totalBruto  = sorted.reduce((s, r) => s + (r.amount    || 0), 0);
+  const totalIR     = sorted.reduce((s, r) => s + (r.irAmount  || 0), 0);
+  const totalLiq    = sorted.reduce((s, r) => s + (r.netAmount ?? (r.amount - (r.irAmount || 0))), 0);
+  const totalAnoLiq = sorted
+    .filter(r => r.date?.startsWith(String(thisYear)))
+    .reduce((s, r) => s + (r.netAmount ?? (r.amount - (r.irAmount || 0))), 0);
+
+  if (redemptions.length === 0) return `
+    <div class="animate-fade-in-up">
+      <div class="card" style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">
+        <div style="font-size:2rem;margin-bottom:var(--space-3);">🕐</div>
+        <div>Nenhum resgate registrado ainda.</div>
+        <div style="font-size:var(--font-size-xs);margin-top:var(--space-2);">Os resgates de RF, Ações e Fundos aparecerão aqui.</div>
+      </div>
+    </div>`;
+
+  return `
+    <div class="animate-fade-in-up">
+
+      <!-- Cards -->
+      <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">💰</div>
+          <div class="stat-content">
+            <div class="stat-label">Total Bruto Resgatado</div>
+            <div class="stat-value">${formatCurrency(totalBruto)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-1">
+          <div class="stat-icon" style="background:rgba(239,68,68,.1);color:#EF4444;">🏛️</div>
+          <div class="stat-content">
+            <div class="stat-label">Total IR Pago</div>
+            <div class="stat-value" style="color:var(--color-danger-600);">${formatCurrency(totalIR)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-2">
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">✅</div>
+          <div class="stat-content">
+            <div class="stat-label">Total Líquido Recebido</div>
+            <div class="stat-value" style="color:var(--color-success-600);">${formatCurrency(totalLiq)}</div>
+          </div>
+        </div>
+        <div class="stat-card stagger-3">
+          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">📅</div>
+          <div class="stat-content">
+            <div class="stat-label">Líquido em ${thisYear}</div>
+            <div class="stat-value">${formatCurrency(totalAnoLiq)}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabela -->
+      <div class="card">
+        <div class="card-header">
+          <h3>🕐 Todos os Resgates</h3>
+          <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${sorted.length} registro${sorted.length !== 1 ? 's' : ''}</span>
+        </div>
+        <div class="inv-table-wrapper">
+          <table class="inv-table">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Ativo</th>
+                <th>Classe</th>
+                <th>Tipo</th>
+                <th class="text-right">Bruto</th>
+                <th class="text-right">IR</th>
+                <th class="text-right">Líquido</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sorted.map(r => {
+                const name    = r.investmentName || nameMap[r.investmentId] || r.investmentId;
+                const typeStr = TYPE_LABEL[r.investmentType] || r.investmentType || '—';
+                const color   = TYPE_COLOR[r.investmentType] || '#64748B';
+                const ir      = r.irAmount  ?? 0;
+                const net     = r.netAmount ?? (r.amount - ir);
+                const dateStr = r.date
+                  ? new Date(r.date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—';
+                const redeemLabel = r.redeemType === 'total' ? 'Total' : r.redeemType === 'parcial' ? 'Parcial' : '—';
+
+                return `
+                  <tr>
+                    <td style="white-space:nowrap;color:var(--color-gray-600);">${dateStr}</td>
+                    <td><strong>${escapeHtml(name)}</strong></td>
+                    <td>
+                      <span class="inv-badge" style="background:${color}22;color:${color};">${typeStr}</span>
+                    </td>
+                    <td style="color:var(--color-gray-500);font-size:var(--font-size-xs);">${redeemLabel}</td>
+                    <td class="text-right">${formatCurrency(r.amount)}</td>
+                    <td class="text-right" style="color:${ir > 0 ? 'var(--color-danger-600)' : 'var(--color-gray-400)'};">
+                      ${ir > 0 ? `− ${formatCurrency(ir)}` : '—'}
+                    </td>
+                    <td class="text-right"><strong style="color:var(--color-success-600);">${formatCurrency(net)}</strong></td>
+                    <td>
+                      <button class="btn-icon btn-danger delete-redemption" data-id="${r.id}" title="Excluir">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                      </button>
+                    </td>
+                  </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>`;
+}
+
+function bindHistoricoEvents() {
+  document.querySelectorAll('.delete-redemption').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (!confirm('Excluir este registro de resgate?')) return;
+      deleteRedemption(btn.dataset.id);
+      showToast('Registro excluído.', 'success');
+      renderTabContent('carteira');
+    });
+  });
+}
+
 // ── Wrapper RF com sub-abas ───────────────────────────────────────────────────
 
 function renderRFWithSubTabs(rf, redemptions, rates, amortConfirms, activeSubTab) {
@@ -2776,6 +2950,12 @@ function openFundRedeemStep2(fund, invested, current, totalQuotas, gross, date, 
       updateInvestmentFund(fund.id, { quotas: totalQuotas - quotasResgatadas });
     }
 
+    addRedemption({
+      investmentId: fund.id, investmentType: 'fundo', investmentName: fund.name,
+      amount: gross, irAmount: ir, netAmount: net, redeemType: type, date,
+      note: ir > 0 ? `Bruto: ${formatCurrency(gross)} | IR: ${formatCurrency(ir)}` : `Bruto: ${formatCurrency(gross)}`,
+    });
+
     addTransaction({
       description: `Resgate ${type === 'total' ? 'total' : 'parcial'} — ${fund.name}`,
       amount: net,
@@ -2931,8 +3111,11 @@ function openRedemptionModalStep2({ id, name, invested, current, gross, date, re
     const ir  = Math.max(0, parseFloat(document.getElementById('redeem-ir')?.value || '0') || 0);
     const net = gross - ir;
 
-    addRedemption({ investmentId: id, investmentType: type, amount: gross, date,
-      note: ir > 0 ? `IR: ${formatCurrency(ir)}` : '' });
+    addRedemption({
+      investmentId: id, investmentType: type, investmentName: name,
+      amount: gross, irAmount: ir, netAmount: net, redeemType, date,
+      note: ir > 0 ? `Bruto: ${formatCurrency(gross)} | IR: ${formatCurrency(ir)}` : `Bruto: ${formatCurrency(gross)}`,
+    });
 
     addTransaction({
       description: `${redeemType === 'total' ? (isRV ? 'Venda total' : 'Resgate total') : (isRV ? 'Venda parcial' : 'Resgate parcial')} — ${name}`,
