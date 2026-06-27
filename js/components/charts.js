@@ -162,7 +162,7 @@ export function createBarChart(canvasId, labels, data, colors, horizontal = fals
   return chart;
 }
 
-export function createLineChart(canvasId, labels, datasets) {
+export function createLineChart(canvasId, labels, datasets, extraOptions = {}) {
   destroyChart(canvasId);
   const canvas = document.getElementById(canvasId);
   if (!canvas) return null;
@@ -231,6 +231,7 @@ export function createLineChart(canvasId, labels, datasets) {
         },
       },
       animation: { duration: 600 },
+      ...(extraOptions.onHover ? { onHover: extraOptions.onHover } : {}),
     },
   });
 

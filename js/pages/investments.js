@@ -490,10 +490,38 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
     <div class="card" style="margin-top:var(--space-5);">
       <div class="card-header">
         <h3>📈 Evolução Patrimonial</h3>
-        <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Últimos 12 meses · RF estimada com taxa atual · RV e Fundos pelo custo de aquisição</span>
+        <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Passe o mouse no gráfico para ver o resumo do mês</span>
       </div>
-      <div style="height:260px;padding:var(--space-4);">
-        <canvas id="chart-evolution"></canvas>
+      <div style="display:flex;gap:var(--space-4);padding:var(--space-4);align-items:flex-start;">
+        <div style="flex:1;min-width:0;height:240px;">
+          <canvas id="chart-evolution"></canvas>
+        </div>
+        <div id="evolution-summary" style="width:200px;flex-shrink:0;background:var(--color-gray-50);border-radius:var(--radius-lg);padding:var(--space-4);font-size:var(--font-size-sm);">
+          <div id="evo-month" style="font-weight:var(--font-weight-semibold);color:var(--color-gray-700);margin-bottom:var(--space-3);font-size:var(--font-size-xs);text-transform:uppercase;letter-spacing:.05em;">Mês atual</div>
+          <div class="evo-row">
+            <span style="color:var(--color-gray-500);">Patrimônio</span>
+            <strong id="evo-patrimonio">—</strong>
+          </div>
+          <div class="evo-row" style="margin-top:var(--space-2);">
+            <span style="color:var(--color-gray-500);">Aportes</span>
+            <span id="evo-aportes" style="color:var(--color-success-600);">—</span>
+          </div>
+          <div class="evo-row" style="margin-top:var(--space-2);">
+            <span style="color:var(--color-gray-500);">Resgates</span>
+            <span id="evo-resgates" style="color:var(--color-danger-600);">—</span>
+          </div>
+          <div class="evo-row" style="margin-top:var(--space-2);">
+            <span style="color:var(--color-gray-500);">Rendimento RF</span>
+            <span id="evo-rendimento" style="color:var(--color-primary-600);">—</span>
+          </div>
+          <div style="border-top:1px solid var(--color-gray-200);margin-top:var(--space-3);padding-top:var(--space-3);">
+            <div class="evo-row">
+              <span style="color:var(--color-gray-500);">Saldo líq.</span>
+              <strong id="evo-saldo">—</strong>
+            </div>
+          </div>
+          <div id="evo-hint" style="margin-top:var(--space-3);font-size:10px;color:var(--color-gray-400);text-align:center;">← passe o mouse no gráfico</div>
+        </div>
       </div>
     </div>
   `;
@@ -594,11 +622,76 @@ function buildEvolutionChart(rf, rv, funds, redemptions, rates) {
     return Math.max(0, total);
   });
 
+  // Pré-computa resumo mensal para cada ponto
+  const monthlySummaries = points.map((ref, idx) => {
+    const prevRef = idx > 0 ? points[idx - 1] : null;
+
+    // Aportes: investimentos com applicationDate dentro do mês
+    let aportes = 0;
+    [...rf, ...rv, ...funds].forEach(inv => {
+      const d = new Date((inv.applicationDate || '') + 'T00:00:00');
+      const inMonth = prevRef ? d > prevRef && d <= ref : d <= ref;
+      if (!inMonth) return;
+      if (inv.value)        aportes += inv.value;
+      else if (inv.quotas)  aportes += (parseFloat(inv.quotas) || 0) * (parseFloat(inv.avgQuotaPrice) || 0);
+      else if (inv.quantity) aportes += (inv.quantity || 0) * (inv.avgPrice || 0);
+    });
+
+    // Resgates do mês
+    let resgates = 0;
+    redemptions.forEach(r => {
+      const d = new Date((r.date || '') + 'T00:00:00');
+      const inMonth = prevRef ? d > prevRef && d <= ref : d <= ref;
+      if (inMonth) resgates += r.amount || 0;
+    });
+
+    // Rendimento RF: diferença entre estimado e aportado para RF apenas
+    let rendRF = 0;
+    rf.forEach(inv => {
+      if (new Date(inv.applicationDate + 'T00:00:00') > ref) return;
+      const nv = Math.max(0, inv.value - redeemedBefore(inv.id, ref));
+      const isToday = idx === points.length - 1;
+      const est = isToday ? calcCurrentValueRF(nv, inv, rates) : calcValueRFAtDate(nv, inv, rates, ref);
+      rendRF += est - nv;
+    });
+
+    return {
+      label: labels[idx],
+      patrimonio: estimadoData[idx],
+      aportes,
+      resgates,
+      rendRF,
+      saldoLiq: aportes - resgates,
+    };
+  });
+
+  function updateSummaryCard(idx) {
+    const s = monthlySummaries[idx];
+    if (!s) return;
+    const isLast = idx === points.length - 1;
+    document.getElementById('evo-month').textContent    = isLast ? 'Mês Atual' : s.label;
+    document.getElementById('evo-patrimonio').textContent = formatCurrency(s.patrimonio);
+    document.getElementById('evo-aportes').textContent    = s.aportes > 0 ? `+ ${formatCurrency(s.aportes)}` : '—';
+    document.getElementById('evo-resgates').textContent   = s.resgates > 0 ? `− ${formatCurrency(s.resgates)}` : '—';
+    document.getElementById('evo-rendimento').textContent  = s.rendRF >= 0 ? `+ ${formatCurrency(s.rendRF)}` : formatCurrency(s.rendRF);
+    const saldo = document.getElementById('evo-saldo');
+    saldo.textContent = formatCurrency(s.saldoLiq);
+    saldo.style.color = s.saldoLiq >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)';
+    document.getElementById('evo-hint').style.display = 'none';
+  }
+
+  // Mostra mês atual por padrão
+  updateSummaryCard(points.length - 1);
+
   const hasRF = rf.some(i => i.returnType);
   createLineChart('chart-evolution', labels, [
     { label: 'Capital Investido', data: aportadoData, color: '#94A3B8', fill: false },
     ...(hasRF ? [{ label: 'Valor Estimado', data: estimadoData, color: '#3B82F6', fill: true }] : []),
-  ]);
+  ], {
+    onHover: (_, elements) => {
+      if (elements.length > 0) updateSummaryCard(elements[0].index);
+    },
+  });
 }
 
 // ── Tab 2: Renda Fixa ──
