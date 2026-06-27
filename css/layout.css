@@ -114,6 +114,18 @@
   background: var(--color-blue-50);
   color: var(--color-blue-600);
   font-weight: var(--font-weight-semibold);
+  position: relative;
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  background: var(--color-blue-500);
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 
 .nav-item.active svg {
@@ -228,8 +240,10 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 var(--space-6);
-  background: var(--color-white);
+  background: rgba(255,255,255,0.95);
   border-bottom: 1px solid var(--color-gray-200);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  backdrop-filter: blur(8px);
   position: sticky;
   top: 0;
   z-index: var(--z-header);
@@ -260,6 +274,10 @@
 }
 
 /* ── Content Area ── */
+.app-main {
+  background: #f6f8fc;
+}
+
 .content {
   padding: var(--space-6);
   max-width: var(--max-content-width);

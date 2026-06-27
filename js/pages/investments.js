@@ -308,36 +308,52 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
 
   const filtered = applyCarteiraFilters(posicoes);
 
+  const totalInvs = rf.length + rv.length + (getInvestmentsFunds ? getInvestmentsFunds().length : 0);
+
   return `
     <div class="animate-fade-in-up">
       <div class="inv-total-card">
-        <div class="inv-total-label">Total Investido</div>
+        <div class="inv-total-label">Patrimônio Total</div>
         <div class="inv-total-value">${formatCurrency(total)}</div>
+        <div class="inv-total-meta">
+          <div class="inv-total-meta-item">
+            <span class="inv-total-meta-label">Renda Fixa</span>
+            <span class="inv-total-meta-value">${pct(totalRF)}%</span>
+          </div>
+          <div class="inv-total-meta-item">
+            <span class="inv-total-meta-label">Renda Variável</span>
+            <span class="inv-total-meta-value">${pct(totalRVsemCripto)}%</span>
+          </div>
+          <div class="inv-total-meta-item">
+            <span class="inv-total-meta-label">Criptoativos</span>
+            <span class="inv-total-meta-value">${pct(totalCripto)}%</span>
+          </div>
+        </div>
       </div>
 
-      <div class="dashboard-stats" style="margin-top:var(--space-5);">
-        <div class="stat-card">
-          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">🏦</div>
+      <div class="dashboard-stats inv-stats-3" style="margin-top:var(--space-5);">
+        <div class="stat-card stat-balance stat-card-rf">
+          <div class="stat-icon" style="background:rgba(59,130,246,.12);color:#3B82F6;">🏦</div>
           <div class="stat-content">
             <div class="stat-label">Renda Fixa</div>
-            <div class="stat-value">${formatCurrency(totalRF)}</div>
-            <div class="inv-pct-label">${pct(totalRF)}% do total</div>
+            <div class="stat-value" style="font-size:var(--font-size-xl);">${formatCurrency(totalRF)}</div>
+            <div class="inv-pct-label">${pct(totalRF)}% · ${rf.filter(i => netValue(i, redemptions) > 0).length} título${rf.filter(i => netValue(i, redemptions) > 0).length !== 1 ? 's' : ''}</div>
           </div>
         </div>
-        <div class="stat-card stagger-1">
-          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">📈</div>
+        <div class="stat-card stagger-1 stat-card-rv" style="--stat-accent:#22C55E;">
+          <div class="stat-icon" style="background:rgba(34,197,94,.12);color:#22C55E;">📈</div>
           <div class="stat-content">
             <div class="stat-label">Renda Variável</div>
-            <div class="stat-value">${formatCurrency(totalRVsemCripto)}</div>
-            <div class="inv-pct-label">${pct(totalRVsemCripto)}% do total</div>
+            <div class="stat-value" style="font-size:var(--font-size-xl);">${formatCurrency(totalRVsemCripto)}</div>
+            <div class="inv-pct-label">${pct(totalRVsemCripto)}% · ${rv.filter(i => netValue(i, redemptions) > 0).length} ativo${rv.filter(i => netValue(i, redemptions) > 0).length !== 1 ? 's' : ''}</div>
           </div>
         </div>
-        <div class="stat-card stagger-2">
-          <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">₿</div>
+        <div class="stat-card stagger-2 stat-card-cripto">
+          <div class="stat-icon" style="background:rgba(168,85,247,.12);color:#A855F7;">₿</div>
           <div class="stat-content">
             <div class="stat-label">Criptoativos</div>
-            <div class="stat-value">${formatCurrency(totalCripto)}</div>
-            <div class="inv-pct-label">${pct(totalCripto)}% do total</div>
+            <div class="stat-value" style="font-size:var(--font-size-xl);">${formatCurrency(totalCripto)}</div>
+            <div class="inv-pct-label">${pct(totalCripto)}% do patrimônio</div>
           </div>
         </div>
       </div>
@@ -489,38 +505,37 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
     <!-- Evolução Patrimonial -->
     <div class="card" style="margin-top:var(--space-5);">
       <div class="card-header">
-        <h3>📈 Evolução Patrimonial</h3>
+        <h3>Evolução Patrimonial</h3>
         <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Passe o mouse no gráfico para ver o resumo do mês</span>
       </div>
-      <div style="display:flex;gap:var(--space-4);padding:var(--space-4);align-items:flex-start;">
-        <div style="flex:1;min-width:0;height:240px;">
+      <div class="inv-evolution-wrap">
+        <div class="inv-evolution-chart">
           <canvas id="chart-evolution"></canvas>
         </div>
-        <div id="evolution-summary" style="width:200px;flex-shrink:0;background:var(--color-gray-50);border-radius:var(--radius-lg);padding:var(--space-4);font-size:var(--font-size-sm);">
-          <div id="evo-month" style="font-weight:var(--font-weight-semibold);color:var(--color-gray-700);margin-bottom:var(--space-3);font-size:var(--font-size-xs);text-transform:uppercase;letter-spacing:.05em;">Mês atual</div>
+        <div id="evolution-summary" class="evo-summary">
+          <div id="evo-month" class="evo-summary-month">Mês atual</div>
           <div class="evo-row">
-            <span style="color:var(--color-gray-500);">Patrimônio</span>
-            <strong id="evo-patrimonio">—</strong>
+            <span class="evo-row-label">Patrimônio</span>
+            <strong id="evo-patrimonio" style="color:var(--color-gray-900);">—</strong>
           </div>
-          <div class="evo-row" style="margin-top:var(--space-2);">
-            <span style="color:var(--color-gray-500);">Aportes</span>
-            <span id="evo-aportes" style="color:var(--color-success-600);">—</span>
+          <div class="evo-row">
+            <span class="evo-row-label">Aportes</span>
+            <span id="evo-aportes" style="color:var(--color-success-600);font-weight:var(--font-weight-semibold);">—</span>
           </div>
-          <div class="evo-row" style="margin-top:var(--space-2);">
-            <span style="color:var(--color-gray-500);">Resgates</span>
-            <span id="evo-resgates" style="color:var(--color-danger-600);">—</span>
+          <div class="evo-row">
+            <span class="evo-row-label">Resgates</span>
+            <span id="evo-resgates" style="color:var(--color-danger-600);font-weight:var(--font-weight-semibold);">—</span>
           </div>
-          <div class="evo-row" style="margin-top:var(--space-2);">
-            <span style="color:var(--color-gray-500);">Rendimento RF</span>
-            <span id="evo-rendimento" style="color:var(--color-primary-600);">—</span>
+          <div class="evo-row">
+            <span class="evo-row-label">Rendimento RF</span>
+            <span id="evo-rendimento" style="color:var(--color-blue-600);font-weight:var(--font-weight-semibold);">—</span>
           </div>
-          <div style="border-top:1px solid var(--color-gray-200);margin-top:var(--space-3);padding-top:var(--space-3);">
-            <div class="evo-row">
-              <span style="color:var(--color-gray-500);">Saldo líq.</span>
-              <strong id="evo-saldo">—</strong>
-            </div>
+          <div class="evo-divider"></div>
+          <div class="evo-row">
+            <span class="evo-row-label">Saldo líquido</span>
+            <strong id="evo-saldo" style="color:var(--color-gray-900);">—</strong>
           </div>
-          <div id="evo-hint" style="margin-top:var(--space-3);font-size:10px;color:var(--color-gray-400);text-align:center;">← passe o mouse no gráfico</div>
+          <div id="evo-hint" class="evo-hint">← passe o mouse no gráfico</div>
         </div>
       </div>
     </div>
