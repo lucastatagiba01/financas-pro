@@ -403,6 +403,56 @@ export function deleteDivConfirmation(id) {
   setStore(DIV_CONFIRM_KEY, (getStore(DIV_CONFIRM_KEY) || []).filter(c => c.id !== id));
 }
 
+// ── Investments Tesouro Direto ──
+const INV_TD_KEY = 'fp_inv_td';
+
+export function getInvestmentsTD() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return (getStore(INV_TD_KEY) || []).filter(i => i.userId === user.id);
+}
+
+export function addInvestmentTD(inv) {
+  const all  = getStore(INV_TD_KEY) || [];
+  const user = getCurrentUser();
+  const newI = { ...inv, id: generateId(), userId: user.id, createdAt: new Date().toISOString() };
+  all.push(newI);
+  setStore(INV_TD_KEY, all);
+  return newI;
+}
+
+export function updateInvestmentTD(id, updates) {
+  const all = getStore(INV_TD_KEY) || [];
+  const idx = all.findIndex(i => i.id === id);
+  if (idx !== -1) { all[idx] = { ...all[idx], ...updates }; setStore(INV_TD_KEY, all); }
+}
+
+export function deleteInvestmentTD(id) {
+  setStore(INV_TD_KEY, (getStore(INV_TD_KEY) || []).filter(i => i.id !== id));
+}
+
+// ── TD Coupon Confirmations ──
+const TD_COUPON_KEY = 'fp_td_coupon_confirms';
+
+export function getTDCouponConfirms() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return (getStore(TD_COUPON_KEY) || []).filter(c => c.userId === user.id);
+}
+
+export function confirmTDCoupon(record) {
+  const all  = getStore(TD_COUPON_KEY) || [];
+  const user = getCurrentUser();
+  const newC = { ...record, id: generateId(), userId: user.id, confirmedAt: new Date().toISOString() };
+  all.push(newC);
+  setStore(TD_COUPON_KEY, all);
+  return newC;
+}
+
+export function deleteTDCouponConfirm(id) {
+  setStore(TD_COUPON_KEY, (getStore(TD_COUPON_KEY) || []).filter(c => c.id !== id));
+}
+
 // ── Selected Mode (FINANCIAL or INVESTMENTS) ──
 export function setSelectedMode(mode) {
   const validModes = ['FINANCIAL', 'INVESTMENTS'];

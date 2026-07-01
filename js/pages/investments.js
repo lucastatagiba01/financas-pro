@@ -10,9 +10,11 @@ import {
   getInvestmentsRF, addInvestmentRF, updateInvestmentRF, deleteInvestmentRF,
   getInvestmentsRV, addInvestmentRV, updateInvestmentRV, deleteInvestmentRV,
   getInvestmentsFunds, addInvestmentFund, updateInvestmentFund, deleteInvestmentFund,
+  getInvestmentsTD, addInvestmentTD, updateInvestmentTD, deleteInvestmentTD,
   getRedemptions, addRedemption, deleteRedemption,
   getAmortConfirmations, confirmAmortization, deleteAmortConfirmation,
   getDivConfirmations, confirmDividend, deleteDivConfirmation,
+  getTDCouponConfirms, confirmTDCoupon, deleteTDCouponConfirm,
   addTransaction, getTransactions,
 } from '../storage.js';
 import { renderSidebar, bindSidebarEvents } from '../components/sidebar.js';
@@ -31,6 +33,8 @@ let _rvSearch = '';
 let _rvSort = 'value_desc';
 let _carteiraSearch = '';
 let _carteiraSort = 'value_desc';
+let _tdSearch = '';
+let _tdSort = 'maturity_asc';
 
 const SECTOR_LABELS = {
   tecnologia: 'Tecnologia', financas: 'Finanças', energia: 'Energia',
@@ -43,6 +47,99 @@ const SECTOR_LABELS = {
 const ASSET_LABELS = {
   acao: 'Ação', fii: 'FII', etf: 'ETF', bdr: 'BDR', cripto: 'Cripto', outro: 'Outro',
 };
+
+const STAT_ICONS = {
+  bank:     `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="11"/><line x1="10" y1="18" x2="10" y2="11"/><line x1="14" y1="18" x2="14" y2="11"/><line x1="18" y1="18" x2="18" y2="11"/><polygon points="12 2 20 7 4 7 12 2"/></svg>`,
+  trending: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>`,
+  bitcoin:  `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h5a3 3 0 0 1 0 6H9V4z"/><path d="M9 10h6a3 3 0 0 1 0 6H9V10z"/><line x1="9" y1="4" x2="9" y2="20"/><line x1="6" y1="4" x2="6" y2="20"/></svg>`,
+  wallet:   `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8H6a2 2 0 0 1 0-4h14v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/></svg>`,
+  file:     `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
+  shield:   `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,
+  lock:     `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`,
+  target:   `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`,
+  building: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="1"/><line x1="4" y1="10" x2="20" y2="10"/><line x1="9" y1="10" x2="9" y2="22"/><line x1="15" y1="10" x2="15" y2="22"/></svg>`,
+  check:    `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+  calendar: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`,
+  eye:      `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  skip:     `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>`,
+  dollar:   `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`,
+  clock:    `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+};
+
+// ── Tesouro Direto ──
+
+const TD_BOND_LABELS = {
+  selic:      'Tesouro SELIC',
+  prefixado:  'Tesouro Prefixado',
+  ipca:       'Tesouro IPCA+',
+  igpm:       'Tesouro IGPM+',
+};
+
+function tdBondColor(bondType) {
+  switch (bondType) {
+    case 'selic':     return '#3B82F6';
+    case 'prefixado': return '#22C55E';
+    case 'ipca':      return '#F59E0B';
+    case 'igpm':      return '#8B5CF6';
+    default:          return '#64748B';
+  }
+}
+
+function tdToRFParams(inv) {
+  switch (inv.bondType) {
+    case 'selic':
+      return { returnType: 'pos', posIndexer: 'SELIC', posPercentage: parseFloat(inv.rate) || 100 };
+    case 'prefixado':
+      return { returnType: 'pre', preRate: parseFloat(inv.rate) || 0 };
+    case 'ipca':
+      return { returnType: 'hybrid', hybridIndexer: 'IPCA', hybridRate: parseFloat(inv.rate) || 0 };
+    case 'igpm':
+      return { returnType: 'hybrid', hybridIndexer: 'IGPM', hybridRate: parseFloat(inv.rate) || 0 };
+    default:
+      return { returnType: 'pos', posIndexer: 'SELIC', posPercentage: 100 };
+  }
+}
+
+function tdRateLabel(inv) {
+  const r = parseFloat(inv.rate) || 0;
+  switch (inv.bondType) {
+    case 'selic':     return `${r || 100}% SELIC`;
+    case 'prefixado': return `${r.toFixed(2)}% a.a.`;
+    case 'ipca':      return `IPCA + ${r.toFixed(2)}% a.a.`;
+    case 'igpm':      return `IGP-M + ${r.toFixed(2)}% a.a.`;
+    default:          return '';
+  }
+}
+
+function getTDCouponSchedule(inv) {
+  if (!inv.hasCoupon || !inv.couponFirstDate) return [];
+  const maturity = new Date(inv.maturityDate + 'T00:00:00');
+  const today    = new Date(); today.setHours(0, 0, 0, 0);
+  const thisMonth = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}`;
+  const schedule = [];
+  let current = new Date(inv.couponFirstDate + 'T00:00:00');
+  let index   = 0;
+
+  while (current <= maturity && index < 100) {
+    const rate   = parseFloat(inv.couponRate) || parseFloat(inv.rate) || 0;
+    const amount = (netValue(inv, []) || inv.value || 0) * (rate / 100) * 0.5;
+    const dateStr  = current.toISOString().split('T')[0];
+    const dMonth   = `${current.getFullYear()}-${String(current.getMonth()+1).padStart(2,'0')}`;
+    schedule.push({
+      index,
+      date:        dateStr,
+      amount,
+      isPast:      current < today,
+      isToday:     current.getTime() === today.getTime(),
+      isThisMonth: dMonth === thisMonth,
+    });
+    const next = new Date(current);
+    next.setMonth(next.getMonth() + 6);
+    current = next;
+    index++;
+  }
+  return schedule;
+}
 
 // ── Entry Point ──
 
@@ -88,10 +185,12 @@ async function renderTabContent(tab) {
 
   // Busca taxas (usa cache se disponível, busca do BC se necessário)
   if (!_rates) {
-    container.innerHTML = `<div style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">Buscando taxas do Banco Central...</div>`;
+    container.innerHTML = renderSkeleton('Buscando taxas do Banco Central...');
     _rates = await getRates();
   }
   const rates = _rates;
+
+  const td = getInvestmentsTD();
 
   switch (tab) {
     case 'carteira':
@@ -99,15 +198,31 @@ async function renderTabContent(tab) {
       const carteiraSubTab = tab === 'historico' ? 'historico' : (sessionStorage.getItem('carteiraSubTab') || 'visaogeral');
       sessionStorage.setItem('carteiraSubTab', carteiraSubTab);
       const funds = getInvestmentsFunds();
-      container.innerHTML = renderCarteiraWithSubTabs(rf, rv, funds, redemptions, rates, amortConfirms, carteiraSubTab);
+      container.innerHTML = renderCarteiraWithSubTabs(rf, rv, td, funds, redemptions, rates, amortConfirms, carteiraSubTab);
       if (carteiraSubTab === 'visaogeral') {
-        buildCarteiraCharts(rf, rv, redemptions);
-        bindCarteiraFilterEvents(rf, rv, redemptions);
+        buildCarteiraCharts(rf, rv, td, redemptions);
+        bindCarteiraFilterEvents(rf, rv, td, redemptions);
         bindAmortConfirmEvents();
       } else {
         bindHistoricoEvents();
       }
       bindCarteiraSubTabEvents();
+      break;
+    }
+    case 'td': {
+      const tdSubTab = sessionStorage.getItem('tdSubTab') || 'posicao';
+      sessionStorage.setItem('tdSubTab', tdSubTab);
+      const couponConfirms = getTDCouponConfirms();
+      container.innerHTML = renderTDWithSubTabs(td, redemptions, couponConfirms, rates, tdSubTab);
+      if (tdSubTab === 'posicao') {
+        buildTDChart(td, redemptions);
+        bindTDEvents();
+        bindTDFilterEvents(td, redemptions, rates, couponConfirms);
+        bindRedeemEvents('redeem-td', 'td', redemptions);
+      } else if (tdSubTab === 'cupons') {
+        bindTDCouponEvents();
+      }
+      bindTDSubTabEvents();
       break;
     }
     case 'rf':
@@ -116,7 +231,7 @@ async function renderTabContent(tab) {
       sessionStorage.setItem('rfSubTab', rfSubTab);
       container.innerHTML = renderRFWithSubTabs(rf, redemptions, rates, amortConfirms, rfSubTab);
       if (rfSubTab === 'posicao') {
-        buildRFChart(rf);
+        buildRFChart(rf, redemptions, rates);
         bindRFDeleteEvents();
         bindRFFilterEvents(rf, redemptions, rates, amortConfirms);
       }
@@ -132,7 +247,7 @@ async function renderTabContent(tab) {
 
       // Busca cotações se necessário
       if (tickers.length > 0 && !_quotes) {
-        container.innerHTML = `<div style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">Buscando cotações...</div>`;
+        container.innerHTML = renderSkeleton('Buscando cotações ao vivo...');
         _quotes = await getQuotes(tickers);
       } else if (tickers.length > 0) {
         const missing = tickers.filter(t => !_quotes[t]);
@@ -144,7 +259,7 @@ async function renderTabContent(tab) {
 
       // Busca dividendos se necessário
       if (rvSubTab === 'dividendos' && tickers.length > 0 && !_dividends) {
-        container.innerHTML = `<div style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">Buscando dividendos...</div>`;
+        container.innerHTML = renderSkeleton('Buscando histórico de dividendos...');
         localStorage.removeItem('fp_dividends_cache');
         _dividends = await getDividends(tickers);
       }
@@ -154,7 +269,7 @@ async function renderTabContent(tab) {
       container.innerHTML = renderRVWithSubTabs(rv, redemptions, quotes, _dividends || {}, divConfirms, rvSubTab);
 
       if (rvSubTab === 'posicao') {
-        buildRVChart(rv);
+        buildRVChart(rv, redemptions);
         bindRVDeleteEvents();
         bindRVFilterEvents(rv, redemptions, quotes);
         bindRedeemEvents('redeem-rv', 'rv', redemptions);
@@ -271,14 +386,139 @@ function applyCarteiraFilters(posicoes) {
   return list;
 }
 
-function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) {
-  const totalRF = rf.reduce((s, i) => s + netValue(i, redemptions), 0);
+// ── Alocação-alvo ──────────────────────────────────────────────────────────────
+
+function getTargetAlloc() {
+  try { return JSON.parse(localStorage.getItem('fp_target_alloc') || '{}'); } catch { return {}; }
+}
+
+function saveTargetAlloc(data) {
+  localStorage.setItem('fp_target_alloc', JSON.stringify(data));
+}
+
+function renderTargetBar(label, currentPct, targetPct, color) {
+  const curr  = parseFloat(currentPct) || 0;
+  const tgt   = parseFloat(targetPct)  || 0;
+  const diff  = curr - tgt;
+  const absOk = Math.abs(diff) < 2;
+  const diffColor = absOk ? 'var(--color-gray-400)' : diff > 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)';
+
+  return `
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
+          <span style="font-size:var(--font-size-sm);font-weight:var(--font-weight-medium);color:var(--color-gray-700);">${label}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:var(--space-4);font-size:var(--font-size-sm);">
+          <span style="color:var(--color-gray-700);">Atual <strong>${curr.toFixed(1)}%</strong></span>
+          <span style="color:var(--color-gray-400);">Meta ${tgt.toFixed(1)}%</span>
+          <span style="font-weight:var(--font-weight-semibold);color:${diffColor};min-width:44px;text-align:right;">
+            ${diff > 0 ? '+' : ''}${diff.toFixed(1)}%
+          </span>
+        </div>
+      </div>
+      <div style="position:relative;height:8px;background:var(--color-gray-100);border-radius:999px;overflow:visible;">
+        <div style="position:absolute;inset-y:0;left:0;width:${Math.min(curr, 100).toFixed(1)}%;background:${color};border-radius:999px;opacity:0.8;transition:width .4s;"></div>
+        ${tgt > 0 ? `<div style="position:absolute;top:-3px;bottom:-3px;left:calc(${tgt.toFixed(1)}% - 1px);width:2px;background:${color};border-radius:2px;" title="Meta: ${tgt.toFixed(1)}%"></div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderCarteiraTargetSection(totalRF, totalRVsemCripto, totalCripto, total) {
+  const target    = getTargetAlloc();
+  const hasTarget = target.rf != null || target.rv != null || target.cripto != null;
+  const pctN = v => total > 0 ? (v / total) * 100 : 0;
+
+  return `
+    <div class="card" style="margin-bottom:var(--space-5);">
+      <div class="card-header">
+        <h3>Alocação vs Metas</h3>
+        <button class="btn btn-secondary" id="btn-edit-target"
+          style="font-size:var(--font-size-xs);padding:4px 12px;">
+          ${hasTarget ? '✏ Editar Metas' : '+ Definir Metas'}
+        </button>
+      </div>
+      ${hasTarget ? `
+        <div style="padding:var(--space-5);display:flex;flex-direction:column;gap:var(--space-5);">
+          ${target.rf     != null ? renderTargetBar('Renda Fixa',     pctN(totalRF),          target.rf,    '#3B82F6') : ''}
+          ${target.rv     != null ? renderTargetBar('Renda Variável', pctN(totalRVsemCripto), target.rv,    '#22C55E') : ''}
+          ${target.cripto != null ? renderTargetBar('Criptoativos',   pctN(totalCripto),      target.cripto,'#A855F7') : ''}
+        </div>
+      ` : `
+        <div style="padding:var(--space-5);font-size:var(--font-size-sm);color:var(--color-gray-400);">
+          Defina metas para acompanhar o desvio da sua alocação ideal.
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function openTargetAllocModal() {
+  const t = getTargetAlloc();
+  openModal(
+    'Metas de Alocação',
+    `<p style="font-size:var(--font-size-sm);color:var(--color-gray-500);margin:0 0 var(--space-4);">
+       Defina o percentual ideal para cada classe. A barra vertical no gráfico marca onde você quer chegar.
+     </p>
+     <div class="form-row">
+       <div class="form-group">
+         <label class="form-label">Renda Fixa (%)</label>
+         <input type="number" id="tgt-rf" class="form-control"
+           value="${t.rf ?? ''}" placeholder="Ex: 60" min="0" max="100" step="1">
+       </div>
+       <div class="form-group">
+         <label class="form-label">Renda Variável (%)</label>
+         <input type="number" id="tgt-rv" class="form-control"
+           value="${t.rv ?? ''}" placeholder="Ex: 30" min="0" max="100" step="1">
+       </div>
+       <div class="form-group">
+         <label class="form-label">Criptoativos (%)</label>
+         <input type="number" id="tgt-cripto" class="form-control"
+           value="${t.cripto ?? ''}" placeholder="Ex: 10" min="0" max="100" step="1">
+       </div>
+     </div>
+     <div id="tgt-sum" style="font-size:var(--font-size-xs);height:16px;margin-top:var(--space-1);"></div>`,
+    `<button class="btn btn-ghost" id="tgt-cancel">Cancelar</button>
+     <button class="btn btn-primary" id="tgt-save">Salvar</button>`
+  );
+  const updateSum = () => {
+    const sum = (parseFloat(document.getElementById('tgt-rf')?.value)     || 0)
+              + (parseFloat(document.getElementById('tgt-rv')?.value)     || 0)
+              + (parseFloat(document.getElementById('tgt-cripto')?.value) || 0);
+    const el = document.getElementById('tgt-sum');
+    if (!el || sum === 0) { if (el) el.textContent = ''; return; }
+    el.textContent = `Soma: ${sum.toFixed(0)}%${sum === 100 ? ' ✓' : ''}`;
+    el.style.color = sum === 100 ? 'var(--color-success-600)' : 'var(--color-warning-600)';
+  };
+  ['tgt-rf','tgt-rv','tgt-cripto'].forEach(id =>
+    document.getElementById(id)?.addEventListener('input', updateSum)
+  );
+  updateSum();
+  document.getElementById('tgt-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('tgt-save')?.addEventListener('click', () => {
+    saveTargetAlloc({
+      rf:     parseFloat(document.getElementById('tgt-rf').value)     || null,
+      rv:     parseFloat(document.getElementById('tgt-rv').value)     || null,
+      cripto: parseFloat(document.getElementById('tgt-cripto').value) || null,
+    });
+    closeModal();
+    showToast('Metas salvas!', 'success');
+    renderTabContent('carteira');
+  });
+}
+
+function renderCarteiraTab(rf, rv, td, redemptions, rates = {}, amortConfirms = []) {
+  const totalRFprivado = rf.reduce((s, i) => s + netValue(i, redemptions), 0);
+  const totalTD        = td.reduce((s, i) => s + netValue(i, redemptions), 0);
+  const totalRF        = totalRFprivado + totalTD;
   const totalCripto = rv.filter(i => i.assetType === 'cripto').reduce((s, i) => s + netValue(i, redemptions), 0);
   const totalRVsemCripto = rv.reduce((s, i) => s + netValue(i, redemptions), 0) - totalCripto;
   const total = totalRF + totalRVsemCripto + totalCripto;
 
-  const allInv = [...rf, ...rv];
-  const totalBrasil = allInv.filter(i => i.geography === 'brasil').reduce((s, i) => s + netValue(i, redemptions), 0);
+  const allInv = [...rf, ...rv, ...td];
+  const totalBrasil = allInv.filter(i => i.geography === 'brasil' || !i.geography).reduce((s, i) => s + netValue(i, redemptions), 0);
   const totalGlobal = allInv.filter(i => i.geography === 'global').reduce((s, i) => s + netValue(i, redemptions), 0);
 
   const pct = (v) => total > 0 ? ((v / total) * 100).toFixed(1) : '0.0';
@@ -300,15 +540,16 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
     )
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // Posições consolidadas: RF + RV juntos com valores líquidos
+  // Posições consolidadas: RF + TD + RV juntos com valores líquidos
   const posicoes = [
     ...rf.map(i => ({ tipo: 'RF', icon: '🏦', nome: i.name, ticker: '', detalhe: returnTypeLabel(i), value: i.value, netValue: netValue(i, redemptions), geography: i.geography })),
+    ...td.map(i => ({ tipo: 'TD', icon: '🏛️', nome: i.name, ticker: '', detalhe: TD_BOND_LABELS[i.bondType] || i.bondType, value: i.value, netValue: netValue(i, redemptions), geography: 'brasil' })),
     ...rv.map(i => ({ tipo: 'RV', icon: '📈', nome: i.name, ticker: i.ticker, detalhe: ASSET_LABELS[i.assetType] || i.assetType, value: i.value, netValue: netValue(i, redemptions), geography: i.geography })),
   ].filter(p => p.netValue > 0);
 
   const filtered = applyCarteiraFilters(posicoes);
 
-  const totalInvs = rf.length + rv.length + (getInvestmentsFunds ? getInvestmentsFunds().length : 0);
+  const totalInvs = rf.length + td.length + rv.length + (getInvestmentsFunds ? getInvestmentsFunds().length : 0);
 
   return `
     <div class="animate-fade-in-up">
@@ -318,22 +559,22 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
         <div class="inv-total-meta">
           <div class="inv-total-meta-item">
             <span class="inv-total-meta-label">Renda Fixa</span>
-            <span class="inv-total-meta-value">${pct(totalRF)}%</span>
+            <span class="inv-total-meta-value">${formatCurrency(totalRF)} · ${pct(totalRF)}%</span>
           </div>
           <div class="inv-total-meta-item">
             <span class="inv-total-meta-label">Renda Variável</span>
-            <span class="inv-total-meta-value">${pct(totalRVsemCripto)}%</span>
+            <span class="inv-total-meta-value">${formatCurrency(totalRVsemCripto)} · ${pct(totalRVsemCripto)}%</span>
           </div>
           <div class="inv-total-meta-item">
             <span class="inv-total-meta-label">Criptoativos</span>
-            <span class="inv-total-meta-value">${pct(totalCripto)}%</span>
+            <span class="inv-total-meta-value">${formatCurrency(totalCripto)} · ${pct(totalCripto)}%</span>
           </div>
         </div>
       </div>
 
       <div class="dashboard-stats inv-stats-3" style="margin-top:var(--space-5);">
         <div class="stat-card stat-balance stat-card-rf">
-          <div class="stat-icon" style="background:rgba(59,130,246,.12);color:#3B82F6;">🏦</div>
+          <div class="stat-icon" style="background:rgba(59,130,246,.12);color:#3B82F6;">${STAT_ICONS.bank}</div>
           <div class="stat-content">
             <div class="stat-label">Renda Fixa</div>
             <div class="stat-value" style="font-size:var(--font-size-xl);">${formatCurrency(totalRF)}</div>
@@ -341,7 +582,7 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
           </div>
         </div>
         <div class="stat-card stagger-1 stat-card-rv" style="--stat-accent:#22C55E;">
-          <div class="stat-icon" style="background:rgba(34,197,94,.12);color:#22C55E;">📈</div>
+          <div class="stat-icon" style="background:rgba(34,197,94,.12);color:#22C55E;">${STAT_ICONS.trending}</div>
           <div class="stat-content">
             <div class="stat-label">Renda Variável</div>
             <div class="stat-value" style="font-size:var(--font-size-xl);">${formatCurrency(totalRVsemCripto)}</div>
@@ -349,7 +590,7 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
           </div>
         </div>
         <div class="stat-card stagger-2 stat-card-cripto">
-          <div class="stat-icon" style="background:rgba(168,85,247,.12);color:#A855F7;">₿</div>
+          <div class="stat-icon" style="background:rgba(168,85,247,.12);color:#A855F7;">${STAT_ICONS.bitcoin}</div>
           <div class="stat-content">
             <div class="stat-label">Criptoativos</div>
             <div class="stat-value" style="font-size:var(--font-size-xl);">${formatCurrency(totalCripto)}</div>
@@ -357,6 +598,9 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
           </div>
         </div>
       </div>
+
+      <!-- Alocação vs Metas -->
+      ${renderCarteiraTargetSection(totalRF, totalRVsemCripto, totalCripto, total)}
 
       <!-- Vencimentos Próximos -->
       ${vencendo.length > 0 ? `
@@ -535,23 +779,26 @@ function renderCarteiraTab(rf, rv, redemptions, rates = {}, amortConfirms = []) 
   `;
 }
 
-function bindCarteiraFilterEvents(rf, rv, redemptions) {
+function bindCarteiraFilterEvents(rf, rv, td, redemptions) {
   const searchEl = document.getElementById('carteira-search');
   const sortEl   = document.getElementById('carteira-sort');
   if (!searchEl || !sortEl) return;
   const rerender = () => {
     const c = document.getElementById('inv-content');
     if (!c) return;
-    c.innerHTML = renderCarteiraTab(rf, rv, redemptions);
-    buildCarteiraCharts(rf, rv, redemptions);
-    bindCarteiraFilterEvents(rf, rv, redemptions);
+    c.innerHTML = renderCarteiraTab(rf, rv, td, redemptions);
+    buildCarteiraCharts(rf, rv, td, redemptions);
+    bindCarteiraFilterEvents(rf, rv, td, redemptions);
   };
   searchEl.addEventListener('input', (e) => { _carteiraSearch = e.target.value; rerender(); });
   sortEl.addEventListener('change',  (e) => { _carteiraSort   = e.target.value; rerender(); });
+  document.getElementById('btn-edit-target')?.addEventListener('click', openTargetAllocModal);
 }
 
-function buildCarteiraCharts(rf, rv, redemptions = []) {
-  const totalRF = rf.reduce((s, i) => s + netValue(i, redemptions), 0);
+function buildCarteiraCharts(rf, rv, td, redemptions = []) {
+  const totalRFprivado = rf.reduce((s, i) => s + netValue(i, redemptions), 0);
+  const totalTD = td.reduce((s, i) => s + netValue(i, redemptions), 0);
+  const totalRF = totalRFprivado + totalTD;
   const totalCripto = rv.filter(i => i.assetType === 'cripto').reduce((s, i) => s + netValue(i, redemptions), 0);
   const totalRVnormal = rv.reduce((s, i) => s + netValue(i, redemptions), 0) - totalCripto;
   if (totalRF + totalRVnormal + totalCripto === 0) return;
@@ -562,8 +809,8 @@ function buildCarteiraCharts(rf, rv, redemptions = []) {
   if (totalCripto > 0)  { distL.push('Criptoativos');    distD.push(totalCripto);  distC.push('#A855F7'); }
   createDoughnutChart('chart-distribuicao', distL, distD, distC);
 
-  const allInv = [...rf, ...rv];
-  const brasil = allInv.filter(i => i.geography === 'brasil').reduce((s, i) => s + netValue(i, redemptions), 0);
+  const allInv = [...rf, ...rv, ...td];
+  const brasil = allInv.filter(i => i.geography === 'brasil' || !i.geography).reduce((s, i) => s + netValue(i, redemptions), 0);
   const global  = allInv.filter(i => i.geography === 'global').reduce((s, i) => s + netValue(i, redemptions), 0);
   const geoL = [], geoD = [], geoC = [];
   if (brasil > 0) { geoL.push('Brasil'); geoD.push(brasil); geoC.push('#3B82F6'); }
@@ -755,7 +1002,7 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
 
       <!-- Barra de taxas do BC -->
       <div class="inv-rates-bar">
-        <span class="inv-rates-title">📡 Banco Central</span>
+        <span class="inv-rates-title">Banco Central</span>
         <div class="inv-rates-list">
           <div class="inv-rate-item">
             <span class="inv-rate-label">CDI</span>
@@ -777,21 +1024,21 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
 
       <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
         <div class="stat-card">
-          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">🏦</div>
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">${STAT_ICONS.bank}</div>
           <div class="stat-content">
             <div class="stat-label">Valor Aplicado</div>
             <div class="stat-value">${formatCurrency(totalAplicado)}</div>
           </div>
         </div>
         <div class="stat-card stagger-1">
-          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">💰</div>
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">${STAT_ICONS.wallet}</div>
           <div class="stat-content">
             <div class="stat-label">Valor Atual</div>
             <div class="stat-value">${formatCurrency(totalAtual)}</div>
           </div>
         </div>
         <div class="stat-card stagger-2">
-          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">📈</div>
+          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">${STAT_ICONS.trending}</div>
           <div class="stat-content">
             <div class="stat-label">Rendimento Total</div>
             <div class="stat-value" style="color:${totalRendimento >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
@@ -803,7 +1050,7 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
           </div>
         </div>
         <div class="stat-card stagger-3">
-          <div class="stat-icon" style="background:rgba(99,102,241,.1);color:#6366F1;">📄</div>
+          <div class="stat-icon" style="background:rgba(99,102,241,.1);color:#6366F1;">${STAT_ICONS.file}</div>
           <div class="stat-content">
             <div class="stat-label">Títulos</div>
             <div class="stat-value">${rf.length}</div>
@@ -814,14 +1061,14 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
       <!-- Quadrantes de Liquidez -->
       <div class="liq-quadrants">
         <div class="liq-quadrant liq-quadrant-green">
-          <div class="liq-q-icon">🛡️</div>
+          <div class="liq-q-icon">${STAT_ICONS.shield}</div>
           <div class="liq-q-label">Reserva de Emergência</div>
           <div class="liq-q-value">${formatCurrency(liqDaily)}</div>
           <div class="liq-q-sub">${rf.filter(i => i.liquidity === 'daily').length} título${rf.filter(i => i.liquidity === 'daily').length !== 1 ? 's' : ''} · liquidez diária</div>
           <div class="liq-q-pct">${liqPct}% da carteira</div>
         </div>
         <div class="liq-quadrant liq-quadrant-gray">
-          <div class="liq-q-icon">🔒</div>
+          <div class="liq-q-icon">${STAT_ICONS.lock}</div>
           <div class="liq-q-label">No Vencimento</div>
           <div class="liq-q-value">${formatCurrency(liqMaturity)}</div>
           <div class="liq-q-sub">${rf.filter(i => !i.liquidity || i.liquidity === 'maturity').length} título${rf.filter(i => !i.liquidity || i.liquidity === 'maturity').length !== 1 ? 's' : ''} · travado</div>
@@ -834,41 +1081,16 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
         <!-- Por Indexador -->
         <div class="card">
           <div class="card-header"><h3>Por Indexador</h3></div>
-          <div class="inv-rf-legend">
-            ${[
-              { label: 'CDI',      color: '#3B82F6', val: rf.filter(i => (i.returnType==='pos' && (i.posIndexer||i.indexer||'CDI').toUpperCase()==='CDI') ).reduce((s,i)=>s+netValue(i,redemptions),0) },
-              { label: 'SELIC',    color: '#6366F1', val: rf.filter(i => (i.returnType==='pos' && (i.posIndexer||i.indexer||'').toUpperCase()==='SELIC') ).reduce((s,i)=>s+netValue(i,redemptions),0) },
-              { label: 'Pré',      color: '#22C55E', val: rf.filter(i => i.returnType==='pre').reduce((s,i)=>s+netValue(i,redemptions),0) },
-              { label: 'Inflação', color: '#F59E0B', val: rf.filter(i => i.returnType==='hybrid' || (i.returnType==='pos' && ['IPCA','IGPM'].includes((i.posIndexer||i.indexer||'').toUpperCase()))).reduce((s,i)=>s+netValue(i,redemptions),0) },
-            ].filter(r => r.val > 0).map(r => `
-              <div class="inv-rf-type-item">
-                <span class="inv-geo-dot" style="background:${r.color};"></span>
-                <span>${r.label}</span>
-                <span class="rf-legend-pct">${totalAplicado > 0 ? (r.val/totalAplicado*100).toFixed(0) : 0}%</span>
-                <strong>${formatCurrency(r.val)}</strong>
-              </div>`).join('') || '<div style="padding:var(--space-4);color:var(--color-gray-400);font-size:var(--font-size-sm);">Nenhum título cadastrado</div>'}
+          <div class="chart-container" style="height:220px;">
+            ${totalAplicado > 0 ? '<canvas id="chart-rf-indexador"></canvas>' : emptyChart()}
           </div>
         </div>
 
         <!-- Por Categoria -->
         <div class="card">
           <div class="card-header"><h3>Por Categoria</h3></div>
-          <div class="inv-rf-legend">
-            ${[
-              { label: 'Título Público',  color: '#6366F1', key: 'publico'  },
-              { label: 'Bancário',        color: '#3B82F6', key: 'bancario' },
-              { label: 'Crédito Privado', color: '#F59E0B', key: 'privado'  },
-            ].map(cat => {
-              const val = rf.filter(i => (i.category||'bancario') === cat.key).reduce((s,i)=>s+netValue(i,redemptions),0);
-              if (!val) return '';
-              return `
-                <div class="inv-rf-type-item">
-                  <span class="inv-geo-dot" style="background:${cat.color};"></span>
-                  <span>${cat.label}</span>
-                  <span class="rf-legend-pct">${totalAplicado > 0 ? (val/totalAplicado*100).toFixed(0) : 0}%</span>
-                  <strong>${formatCurrency(val)}</strong>
-                </div>`;
-            }).join('') || '<div style="padding:var(--space-4);color:var(--color-gray-400);font-size:var(--font-size-sm);">Nenhum título cadastrado</div>'}
+          <div class="chart-container" style="height:220px;">
+            ${totalAplicado > 0 ? '<canvas id="chart-rf-categoria"></canvas>' : emptyChart()}
           </div>
         </div>
 
@@ -899,11 +1121,9 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
             <thead>
               <tr>
                 <th>Nome</th>
-                <th>Aplicado</th>
                 <th>Valor Atual</th>
                 <th>Rendimento</th>
                 <th>Taxa</th>
-                <th>Dias</th>
                 <th>Vencimento</th>
                 <th></th>
               </tr>
@@ -921,11 +1141,13 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
                 const matDate = new Date(inv.maturityDate + 'T00:00:00');
                 const diffDays = Math.ceil((matDate - today2) / (1000*60*60*24));
                 const isNear   = diffDays >= 0 && diffDays <= 7;
+                const returnTypeColor = inv.returnType === 'pre' ? '#22C55E' : inv.returnType === 'pos' ? '#3B82F6' : '#F59E0B';
 
                 return `
-                  <tr>
+                  <tr style="border-left:3px solid ${returnTypeColor};">
                     <td>
                       <div style="font-weight:var(--font-weight-medium);">${escapeHtml(inv.name)}</div>
+                      <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:1px;">${dias}d aplicado</div>
                       <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;">
                         <span class="inv-badge inv-badge-${inv.returnType}">${returnTypeLabel(inv)}</span>
                         ${inv.amortization ? `<span class="inv-badge" style="background:#FEF9C3;color:#713F12;">Amortiza</span>` : ''}
@@ -935,9 +1157,9 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
                       </div>
                       ${redeemed > 0 ? `<div style="font-size:var(--font-size-xs);color:var(--color-danger-500);margin-top:2px;">Resgatado: ${formatCurrency(redeemed)}</div>` : ''}
                     </td>
-                    <td style="color:var(--color-gray-600);">${formatCurrency(nv)}</td>
                     <td>
                       <strong style="color:var(--color-gray-800);">${formatCurrency(current)}</strong>
+                      <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:2px;">${formatCurrency(nv)}</div>
                     </td>
                     <td>
                       <span style="color:${returnBRL >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};font-weight:var(--font-weight-semibold);">
@@ -948,7 +1170,6 @@ function renderRendaFixaTab(rf, redemptions = [], rates = {}, amortConfirms = []
                       </div>
                     </td>
                     <td style="font-size:var(--font-size-xs);color:var(--color-gray-500);max-width:140px;">${rateLabel}</td>
-                    <td style="color:var(--color-gray-500);font-size:var(--font-size-sm);">${dias}d</td>
                     <td>
                       <div>${formatDate(inv.maturityDate)}</div>
                       ${isNear ? `<span class="inv-near-badge">⚠️ ${diffDays === 0 ? 'hoje' : diffDays + 'd'}</span>` : ''}
@@ -988,7 +1209,7 @@ function renderAmortizationCalendar(rf, amortConfirms = []) {
   return `
     <div class="card" style="margin-top:var(--space-5);">
       <div class="card-header" style="border-bottom:1px solid var(--color-gray-100);">
-        <h3>📅 Cronograma de Amortizações</h3>
+        <h3>Cronograma de Amortizações</h3>
         <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Projeção baseada nas regras cadastradas</span>
       </div>
 
@@ -1062,8 +1283,35 @@ function renderAmortizationCalendar(rf, amortConfirms = []) {
   `;
 }
 
-function buildRFChart(rf) {
-  // gráfico removido — substituído por cards de indexador e categoria
+function buildRFChart(rf, redemptions = [], rates = {}) {
+  const totalAplicado = rf.reduce((s, i) => s + netValue(i, redemptions), 0);
+  if (totalAplicado === 0) return;
+
+  // Por Indexador
+  const indexData = [
+    { label: 'CDI',        color: '#3B82F6', val: rf.filter(i => i.returnType==='pos' && (i.posIndexer||i.indexer||'CDI').toUpperCase()==='CDI').reduce((s,i)=>s+netValue(i,redemptions),0) },
+    { label: 'SELIC',      color: '#6366F1', val: rf.filter(i => i.returnType==='pos' && (i.posIndexer||i.indexer||'').toUpperCase()==='SELIC').reduce((s,i)=>s+netValue(i,redemptions),0) },
+    { label: 'Pré-fixado', color: '#22C55E', val: rf.filter(i => i.returnType==='pre').reduce((s,i)=>s+netValue(i,redemptions),0) },
+    { label: 'Inflação',   color: '#F59E0B', val: rf.filter(i => i.returnType==='hybrid' || (i.returnType==='pos' && ['IPCA','IGPM'].includes((i.posIndexer||i.indexer||'').toUpperCase()))).reduce((s,i)=>s+netValue(i,redemptions),0) },
+  ].filter(r => r.val > 0);
+
+  if (indexData.length > 0) {
+    createDoughnutChart('chart-rf-indexador', indexData.map(r => r.label), indexData.map(r => r.val), indexData.map(r => r.color));
+  }
+
+  // Por Categoria
+  const catData = [
+    { label: 'Título Público',  color: '#6366F1', key: 'publico'  },
+    { label: 'Bancário',        color: '#3B82F6', key: 'bancario' },
+    { label: 'Crédito Privado', color: '#F59E0B', key: 'privado'  },
+  ].map(cat => ({
+    ...cat,
+    val: rf.filter(i => (i.category || 'bancario') === cat.key).reduce((s,i)=>s+netValue(i,redemptions),0),
+  })).filter(r => r.val > 0);
+
+  if (catData.length > 0) {
+    createDoughnutChart('chart-rf-categoria', catData.map(r => r.label), catData.map(r => r.val), catData.map(r => r.color));
+  }
 }
 
 function bindRFDeleteEvents() {
@@ -1075,9 +1323,10 @@ function bindRFDeleteEvents() {
 
   document.querySelectorAll('.delete-rf').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('Excluir este título?')) return;
-      deleteInvestmentRF(btn.dataset.id);
-      renderTabContent('rf');
+      confirmModal('Excluir título?', 'Esta ação é permanente e não pode ser desfeita.', () => {
+        deleteInvestmentRF(btn.dataset.id);
+        renderTabContent('rf');
+      });
     });
   });
 }
@@ -1091,7 +1340,7 @@ function bindRFFilterEvents(rf, redemptions = [], rates = {}, amortConfirms = []
     const container = document.getElementById('inv-content');
     if (!container) return;
     container.innerHTML = renderRendaFixaTab(rf, redemptions, rates, amortConfirms);
-    buildRFChart(rf);
+    buildRFChart(rf, redemptions, rates);
     bindRFDeleteEvents();
     bindRFFilterEvents(rf, redemptions, rates, amortConfirms);
     bindRedeemEvents('redeem-rf', 'rf', redemptions);
@@ -1120,10 +1369,11 @@ function bindAmortConfirmEvents() {
   // Desfazer confirmação
   document.querySelectorAll('.amort-unconfirm').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('Desfazer esta confirmação?')) return;
-      deleteAmortConfirmation(btn.dataset.id);
-      showToast('Confirmação removida.', 'success');
-      renderTabContent(sessionStorage.getItem('invActiveTab') || 'rf');
+      confirmModal('Desfazer confirmação?', 'O recebimento voltará ao status pendente.', () => {
+        deleteAmortConfirmation(btn.dataset.id);
+        showToast('Confirmação removida.', 'success');
+        renderTabContent(sessionStorage.getItem('invActiveTab') || 'rf');
+      }, { confirmText: 'Desfazer', danger: false });
     });
   });
 }
@@ -1236,10 +1486,10 @@ function renderRVWithSubTabs(rv, redemptions, quotes, dividends, divConfirms, ac
   const subTabBar = `
     <div class="rv-subtab-bar">
       <button class="rv-subtab ${activeSubTab === 'posicao' ? 'active' : ''}" data-rv-subtab="posicao">
-        📈 Posição
+        Posição
       </button>
       <button class="rv-subtab ${activeSubTab === 'dividendos' ? 'active' : ''}" data-rv-subtab="dividendos">
-        💵 Dividendos
+        Dividendos
       </button>
     </div>
   `;
@@ -1263,14 +1513,19 @@ function renderRendaVariavelTab(rv, redemptions = [], quotes = {}) {
   const numEmpresas = new Set(rv.filter(i => i.assetType === 'acao').map(i => i.ticker)).size;
   const filtered    = applyRVFilters(rv, redemptions);
 
-  // Totais usando preço atual quando disponível
+  // Totais usando preço atual quando disponível, descontando resgates parciais
   let totalInvestido = 0;
   let totalAtual     = 0;
   rv.forEach(inv => {
-    const q   = quotes[inv.ticker?.toUpperCase()];
-    const qty = parseFloat(inv.quantity) || 0;
-    totalInvestido += qty * (parseFloat(inv.avgPrice) || 0);
-    totalAtual     += q?.price ? qty * q.price : qty * (parseFloat(inv.avgPrice) || 0);
+    const q           = quotes[inv.ticker?.toUpperCase()];
+    const qty         = parseFloat(inv.quantity) || 0;
+    const originalVal = qty * (parseFloat(inv.avgPrice) || 0);
+    const redeemed    = totalRedeemed(inv, redemptions);
+    const netVal      = Math.max(0, originalVal - redeemed);
+    if (originalVal <= 0) return;
+    const fraction    = netVal / originalVal; // proporção ainda em carteira
+    totalInvestido   += netVal;
+    totalAtual       += q?.price ? qty * fraction * q.price : netVal;
   });
   const totalRetorno    = totalAtual - totalInvestido;
   const totalRetornoPct = totalInvestido > 0 ? (totalRetorno / totalInvestido) * 100 : 0;
@@ -1286,7 +1541,7 @@ function renderRendaVariavelTab(rv, redemptions = [], quotes = {}) {
 
       <!-- Barra de cotações -->
       <div class="inv-rates-bar">
-        <span class="inv-rates-title">📡 Cotações ao vivo</span>
+        <span class="inv-rates-title">Cotações ao vivo</span>
         <div class="inv-rates-list">
           ${rv.filter(i => i.ticker).slice(0, 6).map(inv => {
             const q = quotes[inv.ticker?.toUpperCase()];
@@ -1311,21 +1566,21 @@ function renderRendaVariavelTab(rv, redemptions = [], quotes = {}) {
       <!-- Cards de resumo -->
       <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
         <div class="stat-card">
-          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">💰</div>
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">${STAT_ICONS.wallet}</div>
           <div class="stat-content">
             <div class="stat-label">Total Investido</div>
             <div class="stat-value">${formatCurrency(totalInvestido)}</div>
           </div>
         </div>
         <div class="stat-card stagger-1">
-          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">📈</div>
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">${STAT_ICONS.trending}</div>
           <div class="stat-content">
             <div class="stat-label">Valor Atual</div>
             <div class="stat-value">${formatCurrency(totalAtual)}</div>
           </div>
         </div>
         <div class="stat-card stagger-2">
-          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">🎯</div>
+          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">${STAT_ICONS.target}</div>
           <div class="stat-content">
             <div class="stat-label">Rendimento Total</div>
             <div class="stat-value" style="color:${totalRetorno >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
@@ -1337,7 +1592,7 @@ function renderRendaVariavelTab(rv, redemptions = [], quotes = {}) {
           </div>
         </div>
         <div class="stat-card stagger-3">
-          <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">🏭</div>
+          <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">${STAT_ICONS.building}</div>
           <div class="stat-content">
             <div class="stat-label">Ativos / Empresas</div>
             <div class="stat-value">${rv.length} / ${numEmpresas}</div>
@@ -1434,9 +1689,15 @@ function renderRendaVariavelTab(rv, redemptions = [], quotes = {}) {
                     </td>
                     <td>
                       ${q?.change != null
-                        ? `<span style="font-size:var(--font-size-xs);font-weight:600;color:${dayUp ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
-                             ${dayUp ? '▲' : '▼'} ${Math.abs(q.change).toFixed(2)}%
-                           </span>`
+                        ? (() => {
+                            const dayR = currentVal * (q.change / 100);
+                            return `<span style="font-size:var(--font-size-xs);font-weight:600;color:${dayUp ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+                                      ${dayUp ? '▲' : '▼'} ${Math.abs(q.change).toFixed(2)}%
+                                    </span>
+                                    <div style="font-size:10px;color:${dayUp ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
+                                      ${dayUp ? '+' : ''}${formatCurrency(dayR)}
+                                    </div>`;
+                          })()
                         : '—'
                       }
                     </td>
@@ -1475,7 +1736,7 @@ function bindRVFilterEvents(rv, redemptions = [], quotes = {}) {
     const c = document.getElementById('inv-content');
     if (!c) return;
     c.innerHTML = renderRendaVariavelTab(rv, redemptions, quotes);
-    buildRVChart(rv);
+    buildRVChart(rv, redemptions);
     bindRVDeleteEvents();
     bindRVFilterEvents(rv, redemptions, quotes);
     bindRedeemEvents('redeem-rv', 'rv', redemptions);
@@ -1518,7 +1779,7 @@ function renderFundosTab(funds, quotas) {
 
       <!-- Barra de status -->
       <div class="inv-rates-bar">
-        <span class="inv-rates-title">🏦 Cotas dos Fundos</span>
+        <span class="inv-rates-title">Cotas dos Fundos</span>
         <span class="inv-rates-badge ${lastDate ? 'ok' : 'stale'}">
           ${lastDate ? `✓ Atualizado em ${lastDateStr}` : '⚠ Nenhuma cota registrada'}
         </span>
@@ -1530,21 +1791,21 @@ function renderFundosTab(funds, quotas) {
       <!-- Cards -->
       <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
         <div class="stat-card">
-          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">💰</div>
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">${STAT_ICONS.wallet}</div>
           <div class="stat-content">
             <div class="stat-label">Total Investido</div>
             <div class="stat-value">${formatCurrency(totalInvestido)}</div>
           </div>
         </div>
         <div class="stat-card stagger-1">
-          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">📈</div>
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">${STAT_ICONS.trending}</div>
           <div class="stat-content">
             <div class="stat-label">Valor Atual</div>
             <div class="stat-value">${formatCurrency(totalAtual)}</div>
           </div>
         </div>
         <div class="stat-card stagger-2">
-          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">🎯</div>
+          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">${STAT_ICONS.target}</div>
           <div class="stat-content">
             <div class="stat-label">Rendimento</div>
             <div class="stat-value" style="color:${totalRetorno >= 0 ? 'var(--color-success-600)' : 'var(--color-danger-600)'};">
@@ -1556,7 +1817,7 @@ function renderFundosTab(funds, quotas) {
           </div>
         </div>
         <div class="stat-card stagger-3">
-          <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">🏦</div>
+          <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">${STAT_ICONS.bank}</div>
           <div class="stat-content">
             <div class="stat-label">Fundos</div>
             <div class="stat-value">${funds.length}</div>
@@ -1672,7 +1933,7 @@ function renderFundosTab(funds, quotas) {
                       ${currQuota
                         ? `<div><strong>${formatCurrency(currQuota)}</strong></div>
                            <div style="font-size:9px;color:var(--color-gray-400);">${dateStr}</div>`
-                        : `<span style="color:var(--color-warning-600);font-size:var(--font-size-xs);">— insira abaixo</span>`}
+                        : `<span style="color:var(--color-gray-400);font-size:var(--font-size-xs);">Sem cota</span>`}
                     </td>
                     <td><strong>${formatCurrency(current)}</strong></td>
                     <td>
@@ -1686,14 +1947,13 @@ function renderFundosTab(funds, quotas) {
                         : '—'}
                     </td>
                     <td>
-                      <div style="display:flex;align-items:center;gap:4px;">
-                        <input type="number" class="form-control fund-quota-input" data-cnpj="${cnpj}"
-                          placeholder="Cota atual" step="0.000001" min="0"
-                          value="${currQuota || ''}"
-                          style="width:100px;padding:4px 6px;font-size:var(--font-size-xs);">
-                        <button class="btn btn-secondary btn-save-quota" data-cnpj="${cnpj}"
-                          style="padding:4px 8px;font-size:var(--font-size-xs);white-space:nowrap;">✓</button>
-                      </div>
+                      <button class="btn btn-secondary btn-update-quota"
+                        data-cnpj="${cnpj}"
+                        data-current-quota="${currQuota || ''}"
+                        data-fund-name="${escapeHtml(f.name || cnpj)}"
+                        style="padding:4px 12px;font-size:var(--font-size-xs);white-space:nowrap;">
+                        ${currQuota ? '✏ Atualizar' : '+ Inserir cota'}
+                      </button>
                     </td>
                     <td>
                       <div style="display:flex;gap:4px;align-items:center;">
@@ -1727,24 +1987,42 @@ function renderFundosTab(funds, quotas) {
     </div>`;
 }
 
-function bindFundEvents() {
-  document.querySelectorAll('.btn-save-quota').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const cnpj  = btn.dataset.cnpj;
-      const input = document.querySelector(`.fund-quota-input[data-cnpj="${cnpj}"]`);
-      const val   = parseFloat(input?.value);
-      if (!val || val <= 0) { showToast('Digite um valor de cota válido.', 'error'); return; }
-      saveManualQuota(cnpj, val, new Date().toISOString().split('T')[0]);
-      showToast('Cota atualizada!', 'success');
-      renderTabContent('fundos');
-    });
+function openQuotaModal(cnpj, name, currentQuota) {
+  openModal(
+    `Atualizar Cota — ${escapeHtml(name || cnpj)}`,
+    `<div class="form-group">
+       <label class="form-label">Cota atual (R$)</label>
+       <input type="number" id="quota-val" class="form-control"
+         value="${currentQuota ? currentQuota.toFixed(6) : ''}"
+         step="0.000001" min="0" placeholder="Ex: 10.524321">
+       ${currentQuota ? `<div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:4px;">Cota anterior: ${formatCurrency(currentQuota)}</div>` : ''}
+     </div>
+     <div class="form-group">
+       <label class="form-label">Data da cota</label>
+       <input type="date" id="quota-date" class="form-control"
+         value="${new Date().toISOString().split('T')[0]}">
+     </div>`,
+    `<button class="btn btn-ghost" id="quota-cancel">Cancelar</button>
+     <button class="btn btn-primary" id="quota-save">Salvar</button>`
+  );
+  setTimeout(() => document.getElementById('quota-val')?.focus(), 50);
+  document.getElementById('quota-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('quota-save')?.addEventListener('click', () => {
+    const val  = parseFloat(document.getElementById('quota-val').value);
+    const date = document.getElementById('quota-date').value;
+    if (!val || val <= 0) { showToast('Digite uma cota válida.', 'error'); return; }
+    saveManualQuota(cnpj, val, date || new Date().toISOString().split('T')[0]);
+    closeModal();
+    showToast('Cota atualizada!', 'success');
+    renderTabContent('fundos');
   });
+}
 
-  document.querySelectorAll('.fund-quota-input').forEach(input => {
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Enter') {
-        input.closest('tr')?.querySelector('.btn-save-quota')?.click();
-      }
+function bindFundEvents() {
+  document.querySelectorAll('.btn-update-quota').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const q = btn.dataset.currentQuota ? parseFloat(btn.dataset.currentQuota) : null;
+      openQuotaModal(btn.dataset.cnpj, btn.dataset.fundName, q);
     });
   });
 
@@ -1769,30 +2047,545 @@ function bindFundEvents() {
 
   document.querySelectorAll('.delete-fund').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('Excluir este fundo?')) return;
-      deleteInvestmentFund(btn.dataset.id);
-      renderTabContent('fundos');
+      confirmModal('Excluir fundo?', 'Esta ação é permanente e não pode ser desfeita.', () => {
+        deleteInvestmentFund(btn.dataset.id);
+        renderTabContent('fundos');
+      });
     });
   });
 }
 
 // ── Tab: Dividendos ─────────────────────────────────────────────────────────
 
+// ── Tesouro Direto — Sub-tabs ─────────────────────────────────────────────────
+
+function renderTDWithSubTabs(td, redemptions, couponConfirms, rates, activeSubTab) {
+  const withCoupons = td.filter(i => i.hasCoupon).length;
+  const subTabBar = `
+    <div class="rv-subtab-bar">
+      <button class="rv-subtab ${activeSubTab === 'posicao' ? 'active' : ''}" data-td-subtab="posicao">
+        Posição
+      </button>
+      <button class="rv-subtab ${activeSubTab === 'cupons' ? 'active' : ''}" data-td-subtab="cupons">
+        Cupons${withCoupons > 0 ? `<span style="font-size:10px;background:rgba(245,158,11,.15);color:#D97706;border-radius:999px;padding:1px 6px;margin-left:4px;">${withCoupons}</span>` : ''}
+      </button>
+    </div>
+  `;
+  let content;
+  if (activeSubTab === 'cupons') content = renderTDCuponsTab(td, couponConfirms, redemptions);
+  else                           content = renderTesouroDiretoTab(td, redemptions, rates);
+  return subTabBar + content;
+}
+
+function renderTesouroDiretoTab(td, redemptions, rates) {
+  if (td.length === 0) return emptySection('Nenhum título do Tesouro Direto cadastrado.', 'formulario');
+
+  const today2 = new Date(); today2.setHours(0,0,0,0);
+
+  const items = td.map(inv => {
+    const rfParams = tdToRFParams(inv);
+    const nv = netValue(inv, redemptions);
+    const current = calcCurrentValueRF(nv, { ...inv, ...rfParams }, rates);
+    const { returnBRL, returnPct } = calcReturn(nv, current);
+    const dias = daysSince(inv.applicationDate);
+    const matDate = new Date(inv.maturityDate + 'T00:00:00');
+    const diffDays = Math.ceil((matDate - today2) / (1000*60*60*24));
+    return { inv, nv, current, returnBRL, returnPct, dias, diffDays };
+  });
+
+  const withBal = items.filter(x => x.nv > 0);
+  const totalAplicado   = withBal.reduce((s, x) => s + x.nv, 0);
+  const totalAtual      = withBal.reduce((s, x) => s + x.current, 0);
+  const totalRendimento = totalAtual - totalAplicado;
+  const totalPct        = totalAplicado > 0 ? (totalRendimento / totalAplicado) * 100 : 0;
+  const nextMat         = [...withBal].sort((a,b) => a.inv.maturityDate.localeCompare(b.inv.maturityDate))[0];
+
+  // Exposure by indexer (using current value)
+  const exposure = {
+    selic:     { label: 'SELIC',      color: '#3B82F6', total: 0 },
+    prefixado: { label: 'Pré-fixado', color: '#22C55E', total: 0 },
+    ipca:      { label: 'IPCA+',      color: '#F59E0B', total: 0 },
+    igpm:      { label: 'IGPM+',      color: '#8B5CF6', total: 0 },
+  };
+  withBal.forEach(x => { if (exposure[x.inv.bondType]) exposure[x.inv.bondType].total += x.current; });
+  const inflTotal = exposure.ipca.total + exposure.igpm.total;
+  const inflPct   = totalAtual > 0 ? (inflTotal / totalAtual * 100) : 0;
+  const selPct    = totalAtual > 0 ? (exposure.selic.total / totalAtual * 100) : 0;
+  const prePct    = totalAtual > 0 ? (exposure.prefixado.total / totalAtual * 100) : 0;
+
+  // Maturity by year
+  const byYear = {};
+  withBal.forEach(x => {
+    const year = (x.inv.maturityDate || '').substring(0,4) || '?';
+    byYear[year] = (byYear[year] || 0) + x.nv;
+  });
+  const years = Object.keys(byYear).sort();
+
+  let filtered = [...withBal];
+  if (_tdSearch) {
+    const t = _tdSearch.toLowerCase();
+    filtered = filtered.filter(x => x.inv.name.toLowerCase().includes(t));
+  }
+  switch (_tdSort) {
+    case 'maturity_asc':  filtered.sort((a,b) => a.inv.maturityDate.localeCompare(b.inv.maturityDate)); break;
+    case 'maturity_desc': filtered.sort((a,b) => b.inv.maturityDate.localeCompare(a.inv.maturityDate)); break;
+    case 'value_desc':    filtered.sort((a,b) => b.current - a.current); break;
+    case 'return_desc':   filtered.sort((a,b) => b.returnPct - a.returnPct); break;
+  }
+
+  return `
+    <div class="animate-fade-in-up">
+
+      <!-- KPIs principais -->
+      <div class="dashboard-stats" style="grid-template-columns:repeat(4,1fr);margin-bottom:var(--space-4);">
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">${STAT_ICONS.wallet}</div>
+          <div class="stat-content">
+            <div class="stat-label">Total Investido</div>
+            <div class="stat-value">${formatCurrency(totalAplicado)}</div>
+            <div class="inv-pct-label">${withBal.length} título${withBal.length!==1?'s':''}</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">${STAT_ICONS.trending}</div>
+          <div class="stat-content">
+            <div class="stat-label">Valor Atual</div>
+            <div class="stat-value">${formatCurrency(totalAtual)}</div>
+            <div class="inv-pct-label">estimado</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(16,185,129,.1);color:#10B981;">${STAT_ICONS.trending}</div>
+          <div class="stat-content">
+            <div class="stat-label">Rendimento Total</div>
+            <div class="stat-value" style="color:${totalRendimento>=0?'var(--color-success-600)':'var(--color-danger-600)'};">
+              ${totalRendimento>=0?'+':''}${formatCurrency(totalRendimento)}
+            </div>
+            <div class="inv-pct-label" style="color:${totalPct>=0?'var(--color-success-600)':'var(--color-danger-600)'};">${totalPct>=0?'+':''}${totalPct.toFixed(2)}%</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">${STAT_ICONS.calendar}</div>
+          <div class="stat-content">
+            <div class="stat-label">Próx. Vencimento</div>
+            <div class="stat-value" style="font-size:var(--font-size-base);">${nextMat ? formatDate(nextMat.inv.maturityDate) : '—'}</div>
+            <div class="inv-pct-label">${nextMat ? escapeHtml(nextMat.inv.name).substring(0,22) : ''}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Exposição por indexador (linha resumo) -->
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);margin-bottom:var(--space-5);">
+        <div class="card" style="padding:var(--space-3) var(--space-4);">
+          <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+            <span style="width:10px;height:10px;border-radius:50%;background:#F59E0B;display:inline-block;flex-shrink:0;"></span>
+            <span style="font-size:var(--font-size-sm);color:var(--color-gray-500);">Proteção à Inflação</span>
+          </div>
+          <div style="font-size:var(--font-size-xl);font-weight:var(--font-weight-bold);color:var(--color-gray-800);">${inflPct.toFixed(1)}%</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${formatCurrency(inflTotal)} · IPCA+ / IGPM+</div>
+          <div style="margin-top:var(--space-2);height:4px;background:var(--color-gray-100);border-radius:999px;overflow:hidden;"><div style="height:100%;width:${inflPct.toFixed(1)}%;background:#F59E0B;border-radius:999px;"></div></div>
+        </div>
+        <div class="card" style="padding:var(--space-3) var(--space-4);">
+          <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+            <span style="width:10px;height:10px;border-radius:50%;background:#3B82F6;display:inline-block;flex-shrink:0;"></span>
+            <span style="font-size:var(--font-size-sm);color:var(--color-gray-500);">Pós-fixado (SELIC)</span>
+          </div>
+          <div style="font-size:var(--font-size-xl);font-weight:var(--font-weight-bold);color:var(--color-gray-800);">${selPct.toFixed(1)}%</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${formatCurrency(exposure.selic.total)}</div>
+          <div style="margin-top:var(--space-2);height:4px;background:var(--color-gray-100);border-radius:999px;overflow:hidden;"><div style="height:100%;width:${selPct.toFixed(1)}%;background:#3B82F6;border-radius:999px;"></div></div>
+        </div>
+        <div class="card" style="padding:var(--space-3) var(--space-4);">
+          <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+            <span style="width:10px;height:10px;border-radius:50%;background:#22C55E;display:inline-block;flex-shrink:0;"></span>
+            <span style="font-size:var(--font-size-sm);color:var(--color-gray-500);">Pré-fixado</span>
+          </div>
+          <div style="font-size:var(--font-size-xl);font-weight:var(--font-weight-bold);color:var(--color-gray-800);">${prePct.toFixed(1)}%</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${formatCurrency(exposure.prefixado.total)}</div>
+          <div style="margin-top:var(--space-2);height:4px;background:var(--color-gray-100);border-radius:999px;overflow:hidden;"><div style="height:100%;width:${prePct.toFixed(1)}%;background:#22C55E;border-radius:999px;"></div></div>
+        </div>
+      </div>
+
+      <!-- Filtros -->
+      <div class="inv-filter-bar" style="margin-bottom:var(--space-4);">
+        <input type="text" id="td-search" class="form-control" placeholder="Buscar título..." value="${escapeHtml(_tdSearch)}" style="max-width:220px;">
+        <select id="td-sort" class="form-control" style="max-width:200px;">
+          <option value="maturity_asc"  ${_tdSort==='maturity_asc'?'selected':''}>Vencimento (próximo)</option>
+          <option value="maturity_desc" ${_tdSort==='maturity_desc'?'selected':''}>Vencimento (distante)</option>
+          <option value="value_desc"    ${_tdSort==='value_desc'?'selected':''}>Maior valor</option>
+          <option value="return_desc"   ${_tdSort==='return_desc'?'selected':''}>Maior rendimento</option>
+        </select>
+      </div>
+
+      <!-- Tabela de posições -->
+      <div class="card" style="margin-bottom:var(--space-5);">
+        <div class="inv-table-wrapper">
+          <table class="inv-table">
+            <thead>
+              <tr>
+                <th>Título</th>
+                <th>Valor Atual</th>
+                <th>Rendimento</th>
+                <th>Taxa</th>
+                <th>% Carteira</th>
+                <th>Vencimento</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filtered.map(({ inv, nv, current, returnBRL, returnPct, dias, diffDays }) => {
+                const pctCart = totalAtual > 0 ? (current / totalAtual * 100) : 0;
+                return `
+                <tr style="border-left:3px solid ${tdBondColor(inv.bondType)};">
+                  <td>
+                    <div style="font-weight:var(--font-weight-medium);">${escapeHtml(inv.name)}</div>
+                    <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:1px;">${dias}d aplicado · ${formatCurrency(nv)} aplicado</div>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:2px;">
+                      <span class="inv-badge" style="background:${tdBondColor(inv.bondType)}20;color:${tdBondColor(inv.bondType)};border:none;">
+                        ${TD_BOND_LABELS[inv.bondType] || inv.bondType}
+                      </span>
+                      ${inv.hasCoupon ? `<span class="inv-badge" style="background:#FEF9C3;color:#713F12;">Cupons</span>` : ''}
+                    </div>
+                  </td>
+                  <td>
+                    <strong style="color:var(--color-gray-800);">${formatCurrency(current)}</strong>
+                  </td>
+                  <td>
+                    <span style="color:${returnBRL>=0?'var(--color-success-600)':'var(--color-danger-600)'};font-weight:var(--font-weight-semibold);">
+                      ${returnBRL>=0?'+':''}${formatCurrency(returnBRL)}
+                    </span>
+                    <div style="font-size:var(--font-size-xs);color:${returnPct>=0?'var(--color-success-600)':'var(--color-danger-600)'};">
+                      ${returnPct>=0?'+':''}${returnPct.toFixed(2)}%
+                    </div>
+                  </td>
+                  <td style="font-size:var(--font-size-xs);color:var(--color-gray-500);">${tdRateLabel(inv)}</td>
+                  <td>
+                    <div style="display:flex;align-items:center;gap:6px;">
+                      <div style="flex:1;height:5px;background:var(--color-gray-100);border-radius:999px;overflow:hidden;min-width:40px;max-width:60px;">
+                        <div style="height:100%;width:${pctCart.toFixed(1)}%;background:${tdBondColor(inv.bondType)};border-radius:999px;"></div>
+                      </div>
+                      <span style="font-size:var(--font-size-xs);color:var(--color-gray-600);min-width:30px;">${pctCart.toFixed(1)}%</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div>${formatDate(inv.maturityDate)}</div>
+                    ${diffDays >= 0 && diffDays <= 30 ? `<span class="inv-near-badge">⚠️ ${diffDays===0?'hoje':diffDays+'d'}</span>` : ''}
+                    ${diffDays < 0 ? `<div style="font-size:10px;color:var(--color-danger-500);">Vencido</div>` : ''}
+                  </td>
+                  <td style="display:flex;gap:var(--space-1);align-items:center;">
+                    ${nv > 0 ? `<button class="btn-redeem redeem-td"
+                      data-id="${inv.id}" data-name="${escapeHtml(inv.name)}"
+                      data-net="${nv}" data-invested="${nv}" data-current="${current}"
+                      title="Resgatar">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v10"/><path d="m16 6-4 4-4-4"/><rect x="2" y="14" width="20" height="8" rx="2"/></svg>
+                      Resgatar
+                    </button>` : ''}
+                    <button class="btn-icon edit-td" data-id="${inv.id}" data-name="${escapeHtml(inv.name)}" title="Editar nome">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                    <button class="btn-icon delete-td" data-id="${inv.id}" data-name="${escapeHtml(inv.name)}" title="Excluir" style="color:var(--color-danger-500);">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                    </button>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Gráficos + Vencimentos -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:var(--space-5);">
+        <div class="card">
+          <div class="card-header"><h3>Por Tipo</h3></div>
+          <div style="max-width:180px;margin:0 auto;padding:var(--space-3) 0;"><canvas id="chart-td-tipo"></canvas></div>
+          <div style="padding:0 var(--space-4) var(--space-3);">
+            ${Object.entries(exposure).filter(([,e]) => e.total > 0).map(([,e]) => `
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="width:8px;height:8px;border-radius:50%;background:${e.color};display:inline-block;flex-shrink:0;"></span>
+                  <span style="font-size:var(--font-size-xs);">${e.label}</span>
+                </div>
+                <span style="font-size:var(--font-size-xs);color:var(--color-gray-500);">${totalAtual>0?((e.total/totalAtual)*100).toFixed(1):0}%</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Por Vencimento</h3></div>
+          <div style="max-width:180px;margin:0 auto;padding:var(--space-3) 0;"><canvas id="chart-td-venc"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Vencimentos por Ano</h3></div>
+          <div style="padding:var(--space-3) var(--space-4);">
+            ${years.length === 0 ? '<div style="color:var(--color-gray-400);font-size:var(--font-size-sm);">—</div>' : years.map(year => {
+              const pct = totalAplicado > 0 ? (byYear[year] / totalAplicado * 100) : 0;
+              return `
+                <div style="margin-bottom:var(--space-3);">
+                  <div style="display:flex;justify-content:space-between;font-size:var(--font-size-xs);margin-bottom:3px;">
+                    <span style="font-weight:600;color:var(--color-gray-700);">${year}</span>
+                    <span style="color:var(--color-gray-500);">${formatCurrency(byYear[year])}</span>
+                  </div>
+                  <div style="height:6px;background:var(--color-gray-100);border-radius:999px;overflow:hidden;">
+                    <div style="height:100%;width:${pct.toFixed(1)}%;background:#3B82F6;border-radius:999px;transition:width .4s;"></div>
+                  </div>
+                  <div style="font-size:10px;color:var(--color-gray-400);margin-top:2px;">${pct.toFixed(1)}% do total</div>
+                </div>`;
+            }).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderTDCuponsTab(td, couponConfirms, redemptions) {
+  const hasCouponBonds = td.filter(inv => inv.hasCoupon);
+  if (hasCouponBonds.length === 0) {
+    return `<div style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">
+      <div style="font-size:2rem;margin-bottom:var(--space-3);">📭</div>
+      <div>Nenhum título com cupons cadastrado. Ao adicionar um título, marque "Possui cupons semestrais".</div>
+    </div>`;
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const allCoupons = hasCouponBonds.flatMap(inv => {
+    const schedule = getTDCouponSchedule(inv);
+    return schedule.map(c => ({
+      ...c,
+      invName: inv.name,
+      invId: inv.id,
+      bondType: inv.bondType,
+      isConfirmed: couponConfirms.some(cc => cc.investmentId === inv.id && cc.couponDate === c.date),
+    }));
+  });
+
+  const upcoming = allCoupons.filter(c => !c.isPast).sort((a,b) => a.date.localeCompare(b.date));
+  const past     = allCoupons.filter(c =>  c.isPast).sort((a,b) => b.date.localeCompare(a.date));
+
+  const confirmedTotal = past.filter(c => c.isConfirmed).reduce((s,c) => s + c.amount, 0);
+  const pendingTotal   = past.filter(c => !c.isConfirmed).reduce((s,c) => s + c.amount, 0);
+  const upcomingTotal  = upcoming.reduce((s,c) => s + c.amount, 0);
+
+  return `
+    <div class="animate-fade-in-up">
+      <div class="dashboard-stats" style="grid-template-columns:repeat(3,1fr);margin-bottom:var(--space-5);">
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">${STAT_ICONS.check}</div>
+          <div class="stat-content">
+            <div class="stat-label">Recebido (confirmado)</div>
+            <div class="stat-value">${formatCurrency(confirmedTotal)}</div>
+            <div class="inv-pct-label">${past.filter(c=>c.isConfirmed).length} cupom${past.filter(c=>c.isConfirmed).length!==1?'s':''}</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">${STAT_ICONS.clock}</div>
+          <div class="stat-content">
+            <div class="stat-label">A Confirmar (passados)</div>
+            <div class="stat-value">${formatCurrency(pendingTotal)}</div>
+            <div class="inv-pct-label">${past.filter(c=>!c.isConfirmed).length} pendente${past.filter(c=>!c.isConfirmed).length!==1?'s':''}</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">${STAT_ICONS.calendar}</div>
+          <div class="stat-content">
+            <div class="stat-label">Próximos Cupons</div>
+            <div class="stat-value">${formatCurrency(upcomingTotal)}</div>
+            <div class="inv-pct-label">${upcoming.length} cupom${upcoming.length!==1?'s':''}</div>
+          </div>
+        </div>
+      </div>
+
+      ${upcoming.length > 0 ? `
+      <div class="card" style="margin-bottom:var(--space-5);">
+        <div class="card-header"><h3>Próximos Cupons</h3></div>
+        <div class="inv-table-wrapper">
+          <table class="inv-table">
+            <thead><tr><th>Título</th><th>Data</th><th>Valor Estimado</th><th>Tipo</th></tr></thead>
+            <tbody>
+              ${upcoming.map(c => `
+                <tr style="border-left:3px solid ${tdBondColor(c.bondType)};">
+                  <td style="font-weight:var(--font-weight-medium);">${escapeHtml(c.invName)}</td>
+                  <td>${formatDate(c.date)}${c.isThisMonth ? `<div style="font-size:10px;color:var(--color-success-600);font-weight:600;">Este mês</div>` : ''}</td>
+                  <td><strong>${formatCurrency(c.amount)}</strong></td>
+                  <td><span style="font-size:var(--font-size-xs);color:${tdBondColor(c.bondType)};">${TD_BOND_LABELS[c.bondType]}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>` : ''}
+
+      ${past.length > 0 ? `
+      <div class="card">
+        <div class="card-header"><h3>Histórico de Cupons</h3></div>
+        <div class="inv-table-wrapper">
+          <table class="inv-table">
+            <thead><tr><th>Título</th><th>Data</th><th>Valor</th><th>Tipo</th><th>Status</th></tr></thead>
+            <tbody>
+              ${past.map(c => `
+                <tr style="border-left:3px solid ${tdBondColor(c.bondType)};${c.isConfirmed?'':'opacity:0.75;'}">
+                  <td>${escapeHtml(c.invName)}</td>
+                  <td>${formatDate(c.date)}</td>
+                  <td>${formatCurrency(c.amount)}</td>
+                  <td><span style="font-size:var(--font-size-xs);color:${tdBondColor(c.bondType)};">${TD_BOND_LABELS[c.bondType]}</span></td>
+                  <td>
+                    ${c.isConfirmed
+                      ? `<span style="font-size:var(--font-size-xs);color:var(--color-success-600);font-weight:600;">Recebido</span>
+                         <button class="btn-icon td-coupon-unconfirm" data-inv-id="${c.invId}" data-date="${c.date}" title="Desfazer" style="margin-left:4px;">
+                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.62"/></svg>
+                         </button>`
+                      : `<button class="btn btn-secondary td-coupon-confirm" data-inv-id="${c.invId}" data-inv-name="${escapeHtml(c.invName)}" data-date="${c.date}" data-amount="${c.amount.toFixed(2)}" style="padding:2px 8px;font-size:var(--font-size-xs);">Confirmar</button>`
+                    }
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>` : ''}
+    </div>
+  `;
+}
+
+function buildTDChart(td, redemptions) {
+  if (!td.length) return;
+  const typeData = [
+    { label: 'SELIC',      color: '#3B82F6', val: td.filter(i=>i.bondType==='selic').reduce((s,i)=>s+netValue(i,redemptions),0) },
+    { label: 'Pré-fixado', color: '#22C55E', val: td.filter(i=>i.bondType==='prefixado').reduce((s,i)=>s+netValue(i,redemptions),0) },
+    { label: 'IPCA+',      color: '#F59E0B', val: td.filter(i=>i.bondType==='ipca').reduce((s,i)=>s+netValue(i,redemptions),0) },
+    { label: 'IGPM+',      color: '#8B5CF6', val: td.filter(i=>i.bondType==='igpm').reduce((s,i)=>s+netValue(i,redemptions),0) },
+  ].filter(d => d.val > 0);
+  if (typeData.length) createDoughnutChart('chart-td-tipo', typeData.map(d=>d.label), typeData.map(d=>d.val), typeData.map(d=>d.color));
+
+  const COLORS = ['#3B82F6','#22C55E','#F59E0B','#8B5CF6','#EF4444','#06B6D4','#F97316'];
+  const byYear = {};
+  td.forEach(inv => {
+    const nv = netValue(inv, redemptions);
+    if (nv <= 0) return;
+    const year = (inv.maturityDate||'').substring(0,4) || '?';
+    byYear[year] = (byYear[year]||0) + nv;
+  });
+  const years = Object.keys(byYear).sort();
+  if (years.length) createDoughnutChart('chart-td-venc', years, years.map(y=>byYear[y]), COLORS.slice(0,years.length));
+}
+
+function bindTDEvents() {
+  document.querySelectorAll('.edit-td').forEach(btn => {
+    btn.addEventListener('click', () =>
+      openEditNameModal(btn.dataset.id, btn.dataset.name, updateInvestmentTD, 'td')
+    );
+  });
+  document.querySelectorAll('.delete-td').forEach(btn => {
+    btn.addEventListener('click', () => {
+      confirmModal('Excluir título?', `Excluir "${btn.dataset.name}" é uma ação permanente.`, () => {
+        deleteInvestmentTD(btn.dataset.id);
+        renderTabContent('td');
+      });
+    });
+  });
+}
+
+function bindTDFilterEvents(td, redemptions, rates, couponConfirms) {
+  document.getElementById('td-search')?.addEventListener('input', e => {
+    _tdSearch = e.target.value;
+    renderTabContent('td');
+  });
+  document.getElementById('td-sort')?.addEventListener('change', e => {
+    _tdSort = e.target.value;
+    renderTabContent('td');
+  });
+}
+
+function bindTDCouponEvents() {
+  document.querySelectorAll('.td-coupon-confirm').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const { invId, invName, date, amount } = btn.dataset;
+      openModal(
+        'Confirmar Recebimento de Cupom',
+        `<div style="display:flex;flex-direction:column;gap:var(--space-4);">
+          <div style="background:var(--color-gray-50);border-radius:var(--radius-md);padding:var(--space-3);">
+            <div style="font-size:var(--font-size-sm);color:var(--color-gray-500);">Título</div>
+            <div style="font-weight:var(--font-weight-semibold);">${escapeHtml(invName)}</div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);">
+            <div>
+              <label class="form-label">Valor recebido (R$)</label>
+              <input type="number" id="coupon-amount" class="form-control" value="${parseFloat(amount).toFixed(2)}" step="0.01" min="0">
+            </div>
+            <div>
+              <label class="form-label">Data do recebimento</label>
+              <input type="date" id="coupon-date" class="form-control" value="${date}">
+            </div>
+          </div>
+          <div>
+            <label class="form-label">IR descontado (R$) <span style="color:var(--color-gray-400);font-weight:normal;">(opcional)</span></label>
+            <input type="number" id="coupon-ir" class="form-control" placeholder="0.00" step="0.01" min="0">
+          </div>
+        </div>`,
+        `<button class="btn btn-ghost" id="coupon-cancel">Cancelar</button>
+         <button class="btn btn-primary" id="coupon-save">Confirmar recebimento</button>`
+      );
+      document.getElementById('coupon-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('coupon-save')?.addEventListener('click', () => {
+        const gross   = parseFloat(document.getElementById('coupon-amount').value) || 0;
+        const ir      = parseFloat(document.getElementById('coupon-ir').value) || 0;
+        const rcvDate = document.getElementById('coupon-date').value || date;
+        if (gross <= 0) { showToast('Informe o valor recebido.', 'error'); return; }
+        confirmTDCoupon({ investmentId: invId, couponDate: date, amount: gross, irAmount: ir, receivedDate: rcvDate });
+        if (gross - ir > 0) {
+          addTransaction({
+            description: `Cupom TD — ${invName}`,
+            amount: gross - ir,
+            date: rcvDate,
+            type: 'income',
+            categoryId: 'cat_investimentos',
+            fromInvestment: true,
+          });
+        }
+        closeModal();
+        showToast('Cupom confirmado!', 'success');
+        renderTabContent('td');
+      });
+    });
+  });
+
+  document.querySelectorAll('.td-coupon-unconfirm').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const confirms = getTDCouponConfirms();
+      const rec = confirms.find(c => c.investmentId === btn.dataset.invId && c.couponDate === btn.dataset.date);
+      if (rec) {
+        deleteTDCouponConfirm(rec.id);
+        renderTabContent('td');
+        showToast('Confirmação desfeita.', 'success');
+      }
+    });
+  });
+}
+
+function bindTDSubTabEvents() {
+  document.querySelectorAll('[data-td-subtab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      sessionStorage.setItem('tdSubTab', btn.dataset.tdSubtab);
+      renderTabContent('td');
+    });
+  });
+}
+
 // ── Wrapper Carteira com sub-abas ────────────────────────────────────────────
 
-function renderCarteiraWithSubTabs(rf, rv, funds, redemptions, rates, amortConfirms, activeSubTab) {
+function renderCarteiraWithSubTabs(rf, rv, td, funds, redemptions, rates, amortConfirms, activeSubTab) {
   const subTabBar = `
     <div class="rv-subtab-bar">
       <button class="rv-subtab ${activeSubTab === 'visaogeral' ? 'active' : ''}" data-carteira-subtab="visaogeral">
-        📊 Visão Geral
+        Visão Geral
       </button>
       <button class="rv-subtab ${activeSubTab === 'historico' ? 'active' : ''}" data-carteira-subtab="historico">
-        🕐 Histórico de Resgates
+        Histórico de Resgates
       </button>
     </div>`;
   const content = activeSubTab === 'historico'
     ? renderHistoricoTab(rf, rv, funds, redemptions)
-    : renderCarteiraTab(rf, rv, redemptions, rates, amortConfirms);
+    : renderCarteiraTab(rf, rv, td, redemptions, rates, amortConfirms);
   return subTabBar + content;
 }
 
@@ -1856,28 +2649,28 @@ function renderHistoricoTab(rf, rv, funds, redemptions) {
       <!-- Cards -->
       <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
         <div class="stat-card">
-          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">💰</div>
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">${STAT_ICONS.wallet}</div>
           <div class="stat-content">
             <div class="stat-label">Total Bruto Resgatado</div>
             <div class="stat-value">${formatCurrency(totalBruto)}</div>
           </div>
         </div>
         <div class="stat-card stagger-1">
-          <div class="stat-icon" style="background:rgba(239,68,68,.1);color:#EF4444;">🏛️</div>
+          <div class="stat-icon" style="background:rgba(239,68,68,.1);color:#EF4444;">${STAT_ICONS.bank}</div>
           <div class="stat-content">
             <div class="stat-label">Total IR Pago</div>
             <div class="stat-value" style="color:var(--color-danger-600);">${formatCurrency(totalIR)}</div>
           </div>
         </div>
         <div class="stat-card stagger-2">
-          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">✅</div>
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">${STAT_ICONS.check}</div>
           <div class="stat-content">
             <div class="stat-label">Total Líquido Recebido</div>
             <div class="stat-value" style="color:var(--color-success-600);">${formatCurrency(totalLiq)}</div>
           </div>
         </div>
         <div class="stat-card stagger-3">
-          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">📅</div>
+          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">${STAT_ICONS.calendar}</div>
           <div class="stat-content">
             <div class="stat-label">Líquido em ${thisYear}</div>
             <div class="stat-value">${formatCurrency(totalAnoLiq)}</div>
@@ -1888,7 +2681,7 @@ function renderHistoricoTab(rf, rv, funds, redemptions) {
       <!-- Tabela -->
       <div class="card">
         <div class="card-header">
-          <h3>🕐 Todos os Resgates</h3>
+          <h3>Todos os Resgates</h3>
           <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${sorted.length} registro${sorted.length !== 1 ? 's' : ''}</span>
         </div>
         <div class="inv-table-wrapper">
@@ -1952,10 +2745,11 @@ function renderHistoricoTab(rf, rv, funds, redemptions) {
 function bindHistoricoEvents() {
   document.querySelectorAll('.delete-redemption').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('Excluir este registro de resgate?')) return;
-      deleteRedemption(btn.dataset.id);
-      showToast('Registro excluído.', 'success');
-      renderTabContent('carteira');
+      confirmModal('Excluir resgate?', 'Esta ação é permanente e não pode ser desfeita.', () => {
+        deleteRedemption(btn.dataset.id);
+        showToast('Registro excluído.', 'success');
+        renderTabContent('carteira');
+      });
     });
   });
 }
@@ -1966,10 +2760,10 @@ function renderRFWithSubTabs(rf, redemptions, rates, amortConfirms, activeSubTab
   const subTabBar = `
     <div class="rv-subtab-bar">
       <button class="rv-subtab ${activeSubTab === 'posicao' ? 'active' : ''}" data-rf-subtab="posicao">
-        📊 Posição
+        Posição
       </button>
       <button class="rv-subtab ${activeSubTab === 'amortizacoes' ? 'active' : ''}" data-rf-subtab="amortizacoes">
-        📅 Amortizações
+        Amortizações
       </button>
     </div>`;
   const content = activeSubTab === 'amortizacoes'
@@ -2070,28 +2864,28 @@ function renderAmortizacoesTab(rf, amortConfirms) {
       <!-- Cards de resumo -->
       <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
         <div class="stat-card">
-          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">✅</div>
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">${STAT_ICONS.check}</div>
           <div class="stat-content">
             <div class="stat-label">Recebido em ${thisYear}</div>
             <div class="stat-value" style="color:var(--color-success-600);">${formatCurrency(totalRecebidoAno)}</div>
           </div>
         </div>
         <div class="stat-card stagger-1">
-          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">📅</div>
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">${STAT_ICONS.calendar}</div>
           <div class="stat-content">
             <div class="stat-label">Previsto em ${thisYear}</div>
             <div class="stat-value">${formatCurrency(totalProjetadoAno)}</div>
           </div>
         </div>
         <div class="stat-card stagger-2">
-          <div class="stat-icon" style="background:rgba(99,102,241,.1);color:#6366F1;">🔮</div>
+          <div class="stat-icon" style="background:rgba(99,102,241,.1);color:#6366F1;">${STAT_ICONS.eye}</div>
           <div class="stat-content">
             <div class="stat-label">A receber (futuro)</div>
             <div class="stat-value">${formatCurrency(totalFuturo)}</div>
           </div>
         </div>
         <div class="stat-card stagger-3">
-          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">⏭️</div>
+          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">${STAT_ICONS.skip}</div>
           <div class="stat-content">
             <div class="stat-label">Próxima parcela</div>
             <div class="stat-value" style="font-size:var(--font-size-lg);">
@@ -2106,7 +2900,7 @@ function renderAmortizacoesTab(rf, amortConfirms) {
       ${upcoming.length > 0 ? `
       <div class="card" style="margin-bottom:var(--space-4);">
         <div class="card-header">
-          <h3>📅 Próximas parcelas</h3>
+          <h3>Próximas parcelas</h3>
           <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${upcoming.length} parcela${upcoming.length !== 1 ? 's' : ''}</span>
         </div>
         <div class="inv-table-wrapper">
@@ -2121,7 +2915,7 @@ function renderAmortizacoesTab(rf, amortConfirms) {
       ${past.length > 0 ? `
       <div class="card">
         <div class="card-header">
-          <h3>🕐 Histórico</h3>
+          <h3>Histórico</h3>
           <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);">${past.length} parcela${past.length !== 1 ? 's' : ''}</span>
         </div>
         <div class="inv-table-wrapper">
@@ -2241,28 +3035,28 @@ function renderDividendosTab(rv, dividends, divConfirms) {
       <!-- Cards resumo do ano -->
       <div class="dashboard-stats" style="margin-bottom:var(--space-5);">
         <div class="stat-card">
-          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">💵</div>
+          <div class="stat-icon" style="background:rgba(34,197,94,.1);color:#22C55E;">${STAT_ICONS.dollar}</div>
           <div class="stat-content">
             <div class="stat-label">Recebido em ${thisYear}</div>
             <div class="stat-value">${formatCurrency(totalAnoRecebido)}</div>
           </div>
         </div>
         <div class="stat-card stagger-1">
-          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">📅</div>
+          <div class="stat-icon" style="background:rgba(59,130,246,.1);color:#3B82F6;">${STAT_ICONS.calendar}</div>
           <div class="stat-content">
             <div class="stat-label">Previsto em ${thisYear}</div>
             <div class="stat-value">${formatCurrency(totalAnoPrevisto)}</div>
           </div>
         </div>
         <div class="stat-card stagger-2">
-          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">⏳</div>
+          <div class="stat-icon" style="background:rgba(245,158,11,.1);color:#F59E0B;">${STAT_ICONS.clock}</div>
           <div class="stat-content">
             <div class="stat-label">Próximos pagamentos</div>
             <div class="stat-value">${upcoming.length}</div>
           </div>
         </div>
         <div class="stat-card stagger-3">
-          <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">🏦</div>
+          <div class="stat-icon" style="background:rgba(168,85,247,.1);color:#A855F7;">${STAT_ICONS.bank}</div>
           <div class="stat-content">
             <div class="stat-label">Ativos com dividendos</div>
             <div class="stat-value">${Object.keys(dividends).filter(t => (dividends[t]||[]).length > 0).length}</div>
@@ -2280,7 +3074,7 @@ function renderDividendosTab(rv, dividends, divConfirms) {
       ${upcoming.length > 0 ? `
       <div class="card" style="margin-bottom:var(--space-5);">
         <div class="card-header">
-          <h3>📅 Próximos Pagamentos</h3>
+          <h3>Próximos Pagamentos</h3>
         </div>
         <div class="inv-table-wrapper">
           <table class="inv-table">
@@ -2295,7 +3089,7 @@ function renderDividendosTab(rv, dividends, divConfirms) {
       ${past.length > 0 ? `
       <div class="card">
         <div class="card-header">
-          <h3>📋 Histórico de Dividendos</h3>
+          <h3>Histórico de Dividendos</h3>
         </div>
         <div class="inv-table-wrapper">
           <table class="inv-table">
@@ -2388,21 +3182,31 @@ function bindDividendEvents() {
   });
 }
 
-function buildRVChart(rv) {
+function buildRVChart(rv, redemptions = []) {
   if (!rv.length) return;
   const COLORS = ['#3B82F6','#22C55E','#F59E0B','#EF4444','#A855F7','#06B6D4','#F97316','#14B8A6','#8B5CF6','#EC4899'];
 
   const bySector = {};
-  rv.forEach(i => { const k = i.sector || 'outros'; bySector[k] = (bySector[k] || 0) + i.value; });
+  rv.forEach(i => {
+    const nv = netValue(i, redemptions);
+    if (nv <= 0) return;
+    const k = i.sector || 'outros';
+    bySector[k] = (bySector[k] || 0) + nv;
+  });
   const sL = Object.keys(bySector).map(k => SECTOR_LABELS[k] || k);
   const sD = Object.values(bySector);
-  createDoughnutChart('chart-rv-setor', sL, sD, COLORS.slice(0, sL.length));
+  if (sL.length) createDoughnutChart('chart-rv-setor', sL, sD, COLORS.slice(0, sL.length));
 
   const byType = {};
-  rv.forEach(i => { const k = i.assetType || 'outro'; byType[k] = (byType[k] || 0) + i.value; });
+  rv.forEach(i => {
+    const nv = netValue(i, redemptions);
+    if (nv <= 0) return;
+    const k = i.assetType || 'outro';
+    byType[k] = (byType[k] || 0) + nv;
+  });
   const tL = Object.keys(byType).map(k => ASSET_LABELS[k] || k);
   const tD = Object.values(byType);
-  createDoughnutChart('chart-rv-tipo', tL, tD, COLORS.slice(0, tL.length));
+  if (tL.length) createDoughnutChart('chart-rv-tipo', tL, tD, COLORS.slice(0, tL.length));
 }
 
 function bindRVDeleteEvents() {
@@ -2414,9 +3218,10 @@ function bindRVDeleteEvents() {
 
   document.querySelectorAll('.delete-rv').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('Excluir este ativo?')) return;
-      deleteInvestmentRV(btn.dataset.id);
-      renderTabContent('rv');
+      confirmModal('Excluir ativo?', 'Esta ação é permanente e não pode ser desfeita.', () => {
+        deleteInvestmentRV(btn.dataset.id);
+        renderTabContent('rv');
+      });
     });
   });
 }
@@ -2745,6 +3550,10 @@ function renderRVFields() {
         <option value="global">🌎 Global</option>
       </select>
     </div>
+    <div class="form-group">
+      <label class="form-label">Data de Compra</label>
+      <input type="date" name="applicationDate" class="form-control" value="${new Date().toISOString().split('T')[0]}">
+    </div>
     <div class="inv-info-box">
       Valor total calculado automaticamente: <strong>Quantidade × Preço Médio</strong>
     </div>
@@ -2757,34 +3566,37 @@ function bindFormEvents() {
 
   document.querySelectorAll('.delete-launch-rf').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('Excluir este lançamento?')) return;
-      deleteInvestmentRF(btn.dataset.id);
-      renderTabContent('formulario');
+      confirmModal('Excluir lançamento?', 'Esta ação é permanente e não pode ser desfeita.', () => {
+        deleteInvestmentRF(btn.dataset.id);
+        renderTabContent('formulario');
+      });
     });
   });
 
   document.querySelectorAll('.delete-launch-rv').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('Excluir este lançamento?')) return;
-      deleteInvestmentRV(btn.dataset.id);
-      renderTabContent('formulario');
+      confirmModal('Excluir lançamento?', 'Esta ação é permanente e não pode ser desfeita.', () => {
+        deleteInvestmentRV(btn.dataset.id);
+        renderTabContent('formulario');
+      });
     });
   });
 
   document.querySelectorAll('.delete-launch-fundo').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('Excluir este fundo?')) return;
-      deleteInvestmentFund(btn.dataset.id);
-      _quotasFundos = null;
-      renderTabContent('formulario');
+      confirmModal('Excluir fundo?', 'Esta ação é permanente e não pode ser desfeita.', () => {
+        deleteInvestmentFund(btn.dataset.id);
+        renderTabContent('formulario');
+      });
     });
   });
 
   document.querySelectorAll('.delete-launch-redemption').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (!confirm('Excluir este resgate?')) return;
-      deleteRedemption(btn.dataset.id);
-      renderTabContent('formulario');
+      confirmModal('Excluir resgate?', 'Esta ação é permanente e não pode ser desfeita.', () => {
+        deleteRedemption(btn.dataset.id);
+        renderTabContent('formulario');
+      });
     });
   });
 }
@@ -2792,9 +3604,10 @@ function bindFormEvents() {
 function openInvModal() {
   const bodyHtml = `
     <div class="inv-toggle-group" style="margin-bottom:var(--space-5);">
-      <button class="inv-toggle active" data-type="rf">🏦 Renda Fixa</button>
-      <button class="inv-toggle" data-type="rv">📈 Renda Variável</button>
-      <button class="inv-toggle" data-type="fundo">🏛️ Fundo</button>
+      <button class="inv-toggle active" data-type="rf">Renda Fixa</button>
+      <button class="inv-toggle" data-type="td">Tesouro Direto</button>
+      <button class="inv-toggle" data-type="rv">Renda Variável</button>
+      <button class="inv-toggle" data-type="fundo">Fundo</button>
     </div>
     <form id="inv-form">
       <div id="inv-form-fields">${renderRFFields()}</div>
@@ -2817,9 +3630,10 @@ function openInvModal() {
       const fieldsEl = document.getElementById('inv-form-fields');
       if (!fieldsEl) return;
       const type = btn.dataset.type;
-      if (type === 'rf')    { fieldsEl.innerHTML = renderRFFields();    bindReturnTypeEvents(); }
-      else if (type === 'rv') { fieldsEl.innerHTML = renderRVFields(); }
-      else                   { fieldsEl.innerHTML = renderFundFields(); }
+      if      (type === 'rf')    { fieldsEl.innerHTML = renderRFFields();  bindReturnTypeEvents(); }
+      else if (type === 'td')    { fieldsEl.innerHTML = renderTDFields(); bindTDCouponFieldEvents(); }
+      else if (type === 'rv')    { fieldsEl.innerHTML = renderRVFields(); }
+      else                       { fieldsEl.innerHTML = renderFundFields(); }
     });
   });
 
@@ -2829,9 +3643,10 @@ function openInvModal() {
     const form = document.getElementById('inv-form');
     if (!form) return;
     const data = Object.fromEntries(new FormData(form));
-    if (data.formType === 'rf')    handleAddRF(data);
+    if      (data.formType === 'rf') handleAddRF(data);
+    else if (data.formType === 'td') handleAddTD(data);
     else if (data.formType === 'rv') handleAddRV(data);
-    else                            handleAddFund(data);
+    else                             handleAddFund(data);
   });
 }
 
@@ -2986,6 +3801,138 @@ function handleAddRF(data) {
   renderTabContent('formulario');
 }
 
+function renderTDFields() {
+  const today = new Date().toISOString().split('T')[0];
+  return `
+    <input type="hidden" name="formType" value="td">
+    <div class="form-group">
+      <label class="form-label">Nome do Título *</label>
+      <input type="text" name="name" class="form-control" placeholder="Ex: Tesouro IPCA+ 2035" required>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Tipo de Título *</label>
+      <div class="inv-return-toggle">
+        <button type="button" class="inv-return-btn active" data-td-bond="selic">SELIC</button>
+        <button type="button" class="inv-return-btn" data-td-bond="prefixado">Pré-fixado</button>
+        <button type="button" class="inv-return-btn" data-td-bond="ipca">IPCA+</button>
+        <button type="button" class="inv-return-btn" data-td-bond="igpm">IGPM+</button>
+      </div>
+      <input type="hidden" name="bondType" value="selic">
+    </div>
+    <div id="td-rate-field">
+      <div class="form-group">
+        <label class="form-label" id="td-rate-label">% do SELIC (ex: 100)</label>
+        <input type="number" name="rate" class="form-control" id="td-rate-input" placeholder="100" step="0.01" min="0">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">Valor Investido (R$) *</label>
+        <input type="number" name="value" class="form-control" placeholder="0.00" step="0.01" min="0" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Data de Compra *</label>
+        <input type="date" name="applicationDate" class="form-control" value="${today}" required>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Data de Vencimento *</label>
+        <input type="date" name="maturityDate" class="form-control" required>
+      </div>
+    </div>
+
+    <!-- Cupons semestrais -->
+    <div class="inv-amort-toggle-row">
+      <label class="inv-amort-toggle-label">
+        <input type="checkbox" name="hasCoupon" id="td-has-coupon" value="true">
+        <span>Possui cupons semestrais</span>
+        <span style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-left:4px;">(NTN-B, NTN-F com juros semestrais)</span>
+      </label>
+    </div>
+    <div id="td-coupon-fields" style="display:none;">
+      <div class="inv-amort-box">
+        <div class="form-row">
+          <div class="form-group">
+            <label class="form-label">Taxa do cupom (% a.a.)</label>
+            <input type="number" name="couponRate" class="form-control" placeholder="Ex: 6.00" step="0.01" min="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Data do 1° cupom</label>
+            <input type="date" name="couponFirstDate" class="form-control">
+          </div>
+        </div>
+        <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);">Cupons são pagos semestralmente. O valor estimado usa: principal × (taxa / 2).</div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Notas <span style="color:var(--color-gray-400);font-weight:normal;">(opcional)</span></label>
+      <input type="text" name="notes" class="form-control" placeholder="Ex: Comprado via Tesouro Direto web">
+    </div>
+  `;
+}
+
+function bindTDCouponFieldEvents() {
+  const bondBtns = document.querySelectorAll('[data-td-bond]');
+  const bondInput = document.querySelector('[name="bondType"]');
+  const rateLabel = document.getElementById('td-rate-label');
+  const rateInput = document.getElementById('td-rate-input');
+  const nameInput = document.querySelector('[name="name"]');
+
+  const rateLabels = {
+    selic:     ['% do SELIC (ex: 100)', '100'],
+    prefixado: ['Taxa prefixada (% a.a.)', ''],
+    ipca:      ['Spread sobre IPCA (% a.a.)', ''],
+    igpm:      ['Spread sobre IGPM (% a.a.)', ''],
+  };
+  const nameSuggestions = {
+    selic: 'Tesouro SELIC ',
+    prefixado: 'Tesouro Prefixado ',
+    ipca: 'Tesouro IPCA+ ',
+    igpm: 'Tesouro IGPM+ ',
+  };
+
+  bondBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      bondBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const bond = btn.dataset.tdBond;
+      if (bondInput) bondInput.value = bond;
+      if (rateLabel && rateLabels[bond]) {
+        rateLabel.textContent = rateLabels[bond][0];
+        if (rateInput) rateInput.placeholder = rateLabels[bond][1] || 'Ex: 6.00';
+      }
+      if (nameInput && !nameInput.value) {
+        nameInput.placeholder = nameSuggestions[bond] + new Date().getFullYear();
+      }
+    });
+  });
+
+  document.getElementById('td-has-coupon')?.addEventListener('change', e => {
+    document.getElementById('td-coupon-fields').style.display = e.target.checked ? '' : 'none';
+  });
+}
+
+function handleAddTD(data) {
+  if (!data.name || !data.value || !data.applicationDate || !data.maturityDate) {
+    showToast('Preencha todos os campos obrigatórios.', 'error');
+    return;
+  }
+  addInvestmentTD({
+    name:            data.name.trim(),
+    bondType:        data.bondType || 'selic',
+    value:           parseFloat(data.value),
+    applicationDate: data.applicationDate,
+    maturityDate:    data.maturityDate,
+    rate:            parseFloat(data.rate) || (data.bondType === 'selic' ? 100 : 0),
+    hasCoupon:       data.hasCoupon === 'true',
+    couponRate:      parseFloat(data.couponRate) || 0,
+    couponFirstDate: data.couponFirstDate || '',
+    notes:           data.notes || '',
+  });
+  closeModal();
+  showToast('Título do Tesouro Direto adicionado!', 'success');
+  renderTabContent('td');
+}
+
 function handleAddRV(data) {
   if (!data.name || !data.quantity || !data.avgPrice) {
     showToast('Preencha todos os campos obrigatórios.', 'error');
@@ -2999,6 +3946,7 @@ function handleAddRV(data) {
     quantity: parseFloat(data.quantity),
     avgPrice: parseFloat(data.avgPrice),
     geography: data.geography || 'brasil',
+    applicationDate: data.applicationDate || new Date().toISOString().split('T')[0],
   });
   closeModal();
   showToast('Ativo adicionado com sucesso!', 'success');
@@ -3321,7 +4269,7 @@ function openRedemptionModalStep2({ id, name, invested, current, gross, date, re
 
     closeModal();
     showToast('Resgate registrado e lançado em Movimentações!', 'success');
-    renderTabContent(type === 'rf' ? 'rf' : 'rv');
+    renderTabContent(type === 'rf' ? 'rf' : type === 'td' ? 'td' : 'rv');
   });
 }
 
@@ -3358,7 +4306,48 @@ function openEditNameModal(id, currentName, updateFn, tab) {
   input.addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
 }
 
+// ── Confirmação ──────────────────────────────────────────────────────────────
+
+function confirmModal(title, message, onConfirm, { confirmText = 'Excluir', danger = true } = {}) {
+  openModal(
+    title,
+    `<p style="margin:0;color:var(--color-gray-600);font-size:var(--font-size-sm);line-height:1.6;">${message}</p>`,
+    `<button class="btn btn-ghost" id="cm-cancel">Cancelar</button>
+     <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" id="cm-confirm">${confirmText}</button>`
+  );
+  document.getElementById('cm-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('cm-confirm')?.addEventListener('click', () => { closeModal(); onConfirm(); });
+}
+
 // ── Helpers ──
+
+function renderSkeleton(label) {
+  return `
+    <style>
+      @keyframes _fp-pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+      ._fp-skel { border-radius:6px; background:var(--color-gray-200); animation:_fp-pulse 1.5s ease-in-out infinite; }
+    </style>
+    <div style="padding:var(--space-8);max-width:960px;margin:0 auto;">
+      <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-bottom:var(--space-4);text-align:center;">${label}</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:var(--space-4);margin-bottom:var(--space-6);">
+        ${[0,1,2,3].map(() => `
+          <div style="background:var(--color-white);border:1px solid var(--color-gray-200);border-radius:12px;padding:var(--space-4);">
+            <div class="_fp-skel" style="width:36px;height:36px;border-radius:8px;margin-bottom:var(--space-3);"></div>
+            <div class="_fp-skel" style="height:10px;width:60%;margin-bottom:var(--space-2);"></div>
+            <div class="_fp-skel" style="height:18px;width:80%;"></div>
+          </div>`).join('')}
+      </div>
+      <div style="background:var(--color-white);border:1px solid var(--color-gray-200);border-radius:12px;padding:var(--space-4) var(--space-5);">
+        ${[0,1,2,3,4].map((_, i) => `
+          <div style="display:flex;gap:var(--space-4);padding:var(--space-3) 0;${i < 4 ? 'border-bottom:1px solid var(--color-gray-100);' : ''}">
+            <div class="_fp-skel" style="height:14px;flex:2.5;"></div>
+            <div class="_fp-skel" style="height:14px;flex:1;"></div>
+            <div class="_fp-skel" style="height:14px;flex:1;"></div>
+            <div class="_fp-skel" style="height:14px;flex:1;"></div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+}
 
 function emptyChart() {
   return '<div class="empty-state" style="padding:var(--space-6);height:100%;display:flex;align-items:center;justify-content:center;">Sem dados para exibir</div>';
