@@ -155,8 +155,9 @@ function renderDashboardContent(dates) {
       <div class="stat-card stat-balance stagger-2">
         <div class="stat-icon icon-balance">${icons.balance}</div>
         <div class="stat-content">
-          <div class="stat-label">Saldo Atual</div>
-          <div class="stat-value" style="color:${balance>=0?'var(--color-success-600)':'var(--color-danger-600)'};">${formatCurrency(balance)}</div>
+          <div class="stat-label">Saldo Total</div>
+          <div class="stat-value" style="color:${(banksWithBalance.length > 0 ? totalBankBalance : balance)>=0?'var(--color-success-600)':'var(--color-danger-600)'};">${formatCurrency(banksWithBalance.length > 0 ? totalBankBalance : balance)}</div>
+          ${banksWithBalance.length > 0 ? `<div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:2px;">Período: ${balance>=0?'+':''}${formatCurrency(balance)}</div>` : ''}
         </div>
       </div>
       <div class="stat-card stat-count stagger-3">
