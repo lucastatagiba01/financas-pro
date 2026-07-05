@@ -4,7 +4,7 @@
 
 import { icons, formatCurrency, formatDate, escapeHtml } from '../utils.js';
 import {
-  getFilteredTransactions, getCategories, getCategoryById,
+  getFilteredTransactions, getUserTransactions, getCategories, getCategoryById,
   getBanks, addBank, updateBank, deleteBank,
 } from '../storage.js';
 import { getFilterDates, renderFilter, onFilterChange } from '../components/filters.js';
@@ -17,19 +17,19 @@ import { createLineChart, destroyAllCharts } from '../components/charts.js';
 // ── Bank helpers ──────────────────────────────────────────────────────────────
 
 const BANK_PRESETS = [
-  { key: 'nubank',    name: 'Nubank',           color: '#820AD1' },
-  { key: 'itau',      name: 'Itaú',             color: '#FF8C00' },
-  { key: 'bradesco',  name: 'Bradesco',          color: '#CC0000' },
-  { key: 'bb',        name: 'Banco do Brasil',   color: '#1A6BB5' },
-  { key: 'santander', name: 'Santander',         color: '#EC0000' },
-  { key: 'caixa',     name: 'Caixa',             color: '#0070AF' },
-  { key: 'xp',        name: 'XP',               color: '#1A1A2E' },
-  { key: 'inter',     name: 'Inter',             color: '#FF7A00' },
-  { key: 'c6',        name: 'C6 Bank',           color: '#242424' },
-  { key: 'picpay',    name: 'PicPay',            color: '#21C25E' },
-  { key: 'neon',      name: 'Neon',              color: '#1282A2' },
-  { key: 'sicoob',    name: 'Sicoob',            color: '#006B3F' },
-  { key: 'custom',    name: 'Outro banco',       color: '#64748B' },
+  { key: 'nubank',    name: 'Nubank',           color: '#820AD1', defaultType: 'digital'     },
+  { key: 'itau',      name: 'Itaú',             color: '#FF8C00', defaultType: 'corrente'    },
+  { key: 'bradesco',  name: 'Bradesco',          color: '#CC0000', defaultType: 'corrente'    },
+  { key: 'bb',        name: 'Banco do Brasil',   color: '#1A6BB5', defaultType: 'corrente'    },
+  { key: 'santander', name: 'Santander',         color: '#EC0000', defaultType: 'corrente'    },
+  { key: 'caixa',     name: 'Caixa',             color: '#0070AF', defaultType: 'poupanca'    },
+  { key: 'xp',        name: 'XP',               color: '#1A1A2E', defaultType: 'investimento' },
+  { key: 'inter',     name: 'Inter',             color: '#FF7A00', defaultType: 'digital'     },
+  { key: 'c6',        name: 'C6 Bank',           color: '#242424', defaultType: 'digital'     },
+  { key: 'picpay',    name: 'PicPay',            color: '#21C25E', defaultType: 'digital'     },
+  { key: 'neon',      name: 'Neon',              color: '#1282A2', defaultType: 'digital'     },
+  { key: 'sicoob',    name: 'Sicoob',            color: '#006B3F', defaultType: 'corrente'    },
+  { key: 'custom',    name: 'Outro banco',       color: '#64748B', defaultType: 'corrente'    },
 ];
 
 const ACCOUNT_TYPE_LABELS = {
@@ -94,9 +94,18 @@ function renderDashboardContent(dates) {
   const container = document.getElementById('dashboard-content');
   if (!container) return;
 
-  const transactions = getFilteredTransactions(dates.start, dates.end);
-  const categories   = getCategories();
-  const banks        = getBanks();
+  const transactions    = getFilteredTransactions(dates.start, dates.end);
+  const allTransactions = getUserTransactions(); // used for bank balance calc (all time)
+  const categories      = getCategories();
+  const banks           = getBanks();
+
+  // Compute effective balance per bank: initialBalance + all linked income - all linked expenses
+  const banksWithBalance = banks.map(bank => {
+    const linked  = allTransactions.filter(t => t.bankId === bank.id);
+    const income  = linked.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+    const expense = linked.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    return { ...bank, effectiveBalance: (bank.balance || 0) + income - expense };
+  });
 
   // Calculations
   const income   = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
@@ -123,8 +132,8 @@ function renderDashboardContent(dates) {
 
   const recent = [...transactions].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt||'').localeCompare(a.createdAt||'')).slice(0, 7);
 
-  // Banks totals
-  const totalBankBalance = banks.reduce((s, b) => s + (b.balance || 0), 0);
+  // Banks totals (use effective balance)
+  const totalBankBalance = banksWithBalance.reduce((s, b) => s + b.effectiveBalance, 0);
 
   container.innerHTML = `
     <!-- Stats -->
@@ -231,7 +240,7 @@ function renderDashboardContent(dates) {
           ${icons.plus} Banco
         </button>
       </div>
-      ${banks.length === 0 ? `
+      ${banksWithBalance.length === 0 ? `
         <div style="padding:var(--space-8);text-align:center;color:var(--color-gray-400);">
           <div style="font-size:2rem;margin-bottom:var(--space-2);">🏦</div>
           <div style="font-size:var(--font-size-sm);">Nenhum banco cadastrado ainda.</div>
@@ -239,14 +248,14 @@ function renderDashboardContent(dates) {
         </div>
       ` : `
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:var(--space-3);">
-          ${banks.map(bank => renderBankCard(bank)).join('')}
+          ${banksWithBalance.map(bank => renderBankCard(bank)).join('')}
         </div>
       `}
     </div>
   `;
 
   buildDailyChart(transactions, dates);
-  bindBanksEvents(banks);
+  bindBanksEvents(banks, banksWithBalance);
 }
 
 // ── Bank card ─────────────────────────────────────────────────────────────────
@@ -282,8 +291,9 @@ function renderBankCard(bank) {
 
       <!-- Balance -->
       <div style="position:relative;z-index:1;">
-        <div style="font-size:9px;opacity:.6;letter-spacing:.7px;text-transform:uppercase;margin-bottom:3px;">Saldo</div>
-        <div style="font-size:var(--font-size-xl);font-weight:700;letter-spacing:-.3px;">${formatCurrency(bank.balance || 0)}</div>
+        <div style="font-size:9px;opacity:.6;letter-spacing:.7px;text-transform:uppercase;margin-bottom:3px;">Saldo Atual</div>
+        <div style="font-size:var(--font-size-xl);font-weight:700;letter-spacing:-.3px;">${formatCurrency(bank.effectiveBalance ?? bank.balance ?? 0)}</div>
+        ${(bank.balance || 0) !== (bank.effectiveBalance ?? bank.balance ?? 0) ? `<div style="font-size:10px;opacity:.55;margin-top:1px;">Inicial: ${formatCurrency(bank.balance || 0)}</div>` : ''}
       </div>
 
       <!-- Actions -->
@@ -303,10 +313,11 @@ function renderBankCard(bank) {
 
 // ── Bank events & modal ───────────────────────────────────────────────────────
 
-function bindBanksEvents(banks) {
+function bindBanksEvents(banks, banksWithBalance = banks) {
   document.getElementById('btn-add-bank')?.addEventListener('click', () => openBankModal(null));
 
   document.querySelectorAll('.edit-bank-btn').forEach(btn => {
+    // Use original bank (without computed effectiveBalance) for editing
     const bank = banks.find(b => b.id === btn.dataset.id);
     btn.addEventListener('click', () => openBankModal(bank));
   });
@@ -381,12 +392,13 @@ function openBankModal(bank) {
      <button type="button" class="btn btn-primary" id="bank-save">${isEdit ? 'Salvar' : 'Adicionar'}</button>`
   );
 
-  // Preset auto-fill
+  // Preset auto-fill (name + color + account type)
   document.getElementById('bank-preset').addEventListener('change', e => {
     const preset = BANK_PRESETS.find(p => p.key === e.target.value);
     if (!preset) return;
     document.getElementById('bank-name').value = preset.name;
     document.getElementById('bank-color').value = preset.color;
+    if (preset.defaultType) document.getElementById('bank-type').value = preset.defaultType;
     document.querySelectorAll('.bank-color-btn').forEach(b => {
       b.style.borderColor = b.dataset.color === preset.color ? 'var(--color-gray-800)' : 'transparent';
     });
