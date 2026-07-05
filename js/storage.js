@@ -468,3 +468,65 @@ export function getSelectedMode() {
 export function clearSelectedMode() {
   localStorage.removeItem(STORAGE_KEYS.SELECTED_MODE);
 }
+
+// ── Banks ──────────────────────────────────────────────────────────────────
+const BANKS_KEY = 'fp_banks';
+
+export function getBanks() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return (getStore(BANKS_KEY) || []).filter(b => b.userId === user.id);
+}
+
+export function addBank(bank) {
+  const all  = getStore(BANKS_KEY) || [];
+  const user = getCurrentUser();
+  const newB = { ...bank, id: generateId(), userId: user.id, createdAt: new Date().toISOString() };
+  all.push(newB);
+  setStore(BANKS_KEY, all);
+  return newB;
+}
+
+export function updateBank(id, updates) {
+  const all = getStore(BANKS_KEY) || [];
+  const idx = all.findIndex(b => b.id === id);
+  if (idx !== -1) { all[idx] = { ...all[idx], ...updates, updatedAt: new Date().toISOString() }; setStore(BANKS_KEY, all); }
+}
+
+export function deleteBank(id) {
+  setStore(BANKS_KEY, (getStore(BANKS_KEY) || []).filter(b => b.id !== id));
+}
+
+// ── Subscriptions ──────────────────────────────────────────────────────────
+const SUBS_KEY = 'fp_subscriptions';
+
+export function getSubscriptions() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return (getStore(SUBS_KEY) || []).filter(s => s.userId === user.id);
+}
+
+export function addSubscription(sub) {
+  const all  = getStore(SUBS_KEY) || [];
+  const user = getCurrentUser();
+  const newS = { ...sub, id: generateId(), userId: user.id, active: true, createdAt: new Date().toISOString() };
+  all.push(newS);
+  setStore(SUBS_KEY, all);
+  return newS;
+}
+
+export function updateSubscription(id, updates) {
+  const all = getStore(SUBS_KEY) || [];
+  const idx = all.findIndex(s => s.id === id);
+  if (idx !== -1) { all[idx] = { ...all[idx], ...updates }; setStore(SUBS_KEY, all); }
+}
+
+export function deleteSubscription(id) {
+  setStore(SUBS_KEY, (getStore(SUBS_KEY) || []).filter(s => s.id !== id));
+}
+
+export function toggleSubscriptionActive(id) {
+  const all = getStore(SUBS_KEY) || [];
+  const idx = all.findIndex(s => s.id === id);
+  if (idx !== -1) { all[idx].active = !all[idx].active; setStore(SUBS_KEY, all); }
+}

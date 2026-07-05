@@ -8,12 +8,13 @@ import { navigate, getCurrentRoute } from '../router.js';
 import { getSelectedMode, clearSelectedMode } from '../storage.js';
 
 const NAV_ITEMS_FINANCIAL = [
-  { path: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
-  { path: '/transactions', label: 'Movimentações', icon: 'transactions' },
-  { path: '/analysis', label: 'Análise', icon: 'analysis' },
-  { path: '/reports', label: 'Relatórios', icon: 'reports' },
-  { path: '/fixed', label: 'Gastos Fixos', icon: 'fixed' },
-  { path: '/categories', label: 'Categorias', icon: 'categories' },
+  { path: '/dashboard',    label: 'Dashboard',         icon: 'dashboard' },
+  { path: '/transactions', label: 'Movimentações',     icon: 'transactions' },
+  { path: '/analysis',     label: 'Análise',           icon: 'analysis' },
+  { path: '/reports',      label: 'Relatórios',        icon: 'reports' },
+  { path: '/fixed',        label: 'Gastos Fixos',      icon: 'fixed' },
+  { path: '/services',     label: 'Serviços & Bancos', icon: 'balance' },
+  { path: '/categories',   label: 'Categorias',        icon: 'categories' },
 ];
 
 const NAV_ITEMS_INVESTMENTS = [
