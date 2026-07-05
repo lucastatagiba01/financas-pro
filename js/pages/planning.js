@@ -41,8 +41,8 @@ function renderPlanningContent() {
   if (!container) return;
 
   const plan = getFinancialPlan();
-  const nonCreditTotal = (plan.nonCreditExpenses || []).reduce((s, e) => s + (e.amount || 0), 0);
-  const rendaNecessaria = plan.maxCreditLimit + nonCreditTotal;
+  const nonCreditTotal  = (plan.nonCreditExpenses || []).reduce((s, e) => s + (e.amount || 0), 0);
+  const rendaNecessaria = plan.maxCreditLimit + nonCreditTotal + (plan.monthlyInvestment || 0);
 
   container.innerHTML = `
     <!-- Page header -->
@@ -52,7 +52,7 @@ function renderPlanningContent() {
     </div>
 
     <!-- 2x2 quadrant grid -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4);">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4);margin-bottom:var(--space-4);">
 
       <!-- Q1: Ideal de gasto no crédito -->
       ${renderValueQuadrant({
@@ -76,13 +76,24 @@ function renderPlanningContent() {
         tip: 'Nunca ultrapasse este valor no cartão de crédito.',
       })}
 
-      <!-- Q3: Despesas fora do crédito -->
+      <!-- Q3: Meta de investimento -->
+      ${renderValueQuadrant({
+        title: 'Meta de Investimento Mensal',
+        subtitle: 'Quanto você precisa separar para investir',
+        value: plan.monthlyInvestment || 0,
+        color: '#22C55E',
+        icon: '📈',
+        field: 'monthlyInvestment',
+        tip: 'Pague-se primeiro — reserve isto antes de gastar.',
+      })}
+
+      <!-- Q4: Despesas fora do crédito -->
       ${renderNonCreditQuadrant(plan.nonCreditExpenses || [], nonCreditTotal)}
 
-      <!-- Q4: Renda necessária (calculada) -->
-      ${renderIncomeQuadrant(rendaNecessaria, plan.maxCreditLimit, nonCreditTotal)}
-
     </div>
+
+    <!-- Renda necessária — full width abaixo -->
+    ${renderIncomeQuadrant(rendaNecessaria, plan.maxCreditLimit, nonCreditTotal, plan.monthlyInvestment || 0)}
   `;
 
   // Bind value quadrant edit buttons
@@ -207,44 +218,45 @@ function renderNonCreditQuadrant(expenses, total) {
 
 // ── Quadrant: renda necessária (calculada) ────────────────────────────────────
 
-function renderIncomeQuadrant(rendaNecessaria, maxCredit, nonCreditTotal) {
+function renderIncomeQuadrant(rendaNecessaria, maxCredit, nonCreditTotal, investment) {
   return `
-    <div class="card animate-fade-in-up stagger-3" style="padding:0;overflow:hidden;">
+    <div class="card animate-fade-in-up" style="padding:0;overflow:hidden;">
       <!-- Header band -->
-      <div style="background:linear-gradient(135deg,#0EA5E9 0%,#0284C7 100%);padding:var(--space-4) var(--space-5);">
-        <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:4px;">
-          <span style="font-size:1.2rem;">💼</span>
-          <span style="font-size:var(--font-size-sm);font-weight:700;color:white;">Renda Mínima Necessária</span>
+      <div style="background:linear-gradient(135deg,#0EA5E9 0%,#0284C7 100%);padding:var(--space-4) var(--space-5);display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:4px;">
+            <span style="font-size:1.2rem;">💼</span>
+            <span style="font-size:var(--font-size-sm);font-weight:700;color:white;">Renda Mínima Necessária</span>
+          </div>
+          <div style="font-size:11px;color:rgba(255,255,255,.75);">Soma de todas as despesas — quanto você precisa ganhar para cobrir tudo</div>
         </div>
-        <div style="font-size:11px;color:rgba(255,255,255,.75);">Quanto você precisa ganhar para cobrir tudo</div>
-      </div>
-
-      <!-- Value -->
-      <div style="padding:var(--space-5) var(--space-5) var(--space-4);">
-        <div style="font-size:2.2rem;font-weight:900;color:#0EA5E9;letter-spacing:-.5px;line-height:1;margin-bottom:var(--space-4);">
+        <div style="font-size:1.8rem;font-weight:900;color:white;letter-spacing:-.5px;white-space:nowrap;">
           ${formatCurrency(rendaNecessaria)}
         </div>
+      </div>
 
-        <!-- Breakdown -->
-        <div style="display:flex;flex-direction:column;gap:var(--space-2);">
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-2) var(--space-3);background:var(--color-gray-50);border-radius:8px;">
-            <div style="display:flex;align-items:center;gap:6px;font-size:var(--font-size-xs);color:var(--color-gray-600);">
-              <span style="width:8px;height:8px;border-radius:50%;background:#EF4444;flex-shrink:0;"></span>
-              Limite máximo no crédito
-            </div>
-            <span style="font-size:var(--font-size-xs);font-weight:700;color:#EF4444;">${formatCurrency(maxCredit)}</span>
+      <!-- Breakdown row -->
+      <div style="padding:var(--space-4) var(--space-5);display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-3) var(--space-4);background:var(--color-gray-50);border-radius:10px;border-left:3px solid #EF4444;">
+          <div>
+            <div style="font-size:10px;color:var(--color-gray-400);margin-bottom:2px;">Limite máximo no crédito</div>
+            <div style="font-size:var(--font-size-lg);font-weight:800;color:#EF4444;">${formatCurrency(maxCredit)}</div>
           </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-2) var(--space-3);background:var(--color-gray-50);border-radius:8px;">
-            <div style="display:flex;align-items:center;gap:6px;font-size:var(--font-size-xs);color:var(--color-gray-600);">
-              <span style="width:8px;height:8px;border-radius:50%;background:#F59E0B;flex-shrink:0;"></span>
-              Despesas fora do crédito
-            </div>
-            <span style="font-size:var(--font-size-xs);font-weight:700;color:#F59E0B;">${formatCurrency(nonCreditTotal)}</span>
+          <span style="font-size:1.2rem;">🚫</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-3) var(--space-4);background:var(--color-gray-50);border-radius:10px;border-left:3px solid #F59E0B;">
+          <div>
+            <div style="font-size:10px;color:var(--color-gray-400);margin-bottom:2px;">Despesas fora do crédito</div>
+            <div style="font-size:var(--font-size-lg);font-weight:800;color:#F59E0B;">${formatCurrency(nonCreditTotal)}</div>
           </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-2) var(--space-3);background:#0EA5E915;border-radius:8px;border:1px solid #0EA5E930;">
-            <span style="font-size:var(--font-size-xs);font-weight:700;color:#0284C7;text-transform:uppercase;letter-spacing:.4px;">Total necessário</span>
-            <span style="font-size:var(--font-size-sm);font-weight:900;color:#0EA5E9;">${formatCurrency(rendaNecessaria)}</span>
+          <span style="font-size:1.2rem;">💸</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-3) var(--space-4);background:var(--color-gray-50);border-radius:10px;border-left:3px solid #22C55E;">
+          <div>
+            <div style="font-size:10px;color:var(--color-gray-400);margin-bottom:2px;">Meta de investimento</div>
+            <div style="font-size:var(--font-size-lg);font-weight:800;color:#22C55E;">${formatCurrency(investment)}</div>
           </div>
+          <span style="font-size:1.2rem;">📈</span>
         </div>
       </div>
     </div>
