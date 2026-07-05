@@ -14,6 +14,7 @@ import { renderFixed } from './pages/fixed.js';
 import { renderCategories } from './pages/categories.js';
 import { renderMenu } from './pages/menu.js';
 import { renderInvestments } from './pages/investments.js';
+import { renderGoals } from './pages/goals.js';
 
 // ── Auth Guard ──
 setBeforeEach((path) => {
@@ -38,6 +39,7 @@ registerRoute('/analysis',     renderAnalysis);
 registerRoute('/reports',      renderReports);
 registerRoute('/fixed',        renderFixed);
 registerRoute('/categories',   renderCategories);
+registerRoute('/goals',        renderGoals);
 
 // ── Init ──
 seedDefaults();

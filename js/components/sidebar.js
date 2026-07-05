@@ -12,6 +12,7 @@ const NAV_ITEMS_FINANCIAL = [
   { path: '/transactions', label: 'Movimentações',     icon: 'transactions' },
   { path: '/analysis',     label: 'Análise',           icon: 'analysis' },
   { path: '/reports',      label: 'Relatórios',        icon: 'reports' },
+  { path: '/goals',        label: 'Metas',             icon: 'trendingUp' },
   { path: '/fixed',        label: 'Gastos Fixos',      icon: 'fixed' },
   { path: '/categories',   label: 'Categorias',        icon: 'categories' },
 ];

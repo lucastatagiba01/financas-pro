@@ -530,3 +530,31 @@ export function toggleSubscriptionActive(id) {
   const idx = all.findIndex(s => s.id === id);
   if (idx !== -1) { all[idx].active = !all[idx].active; setStore(SUBS_KEY, all); }
 }
+
+// ── Goals (Metas) ──────────────────────────────────────────────────────────
+const GOALS_KEY = 'fp_goals';
+
+export function getGoals() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return (getStore(GOALS_KEY) || []).filter(g => g.userId === user.id);
+}
+
+export function addGoal(goal) {
+  const all  = getStore(GOALS_KEY) || [];
+  const user = getCurrentUser();
+  const newG = { ...goal, id: generateId(), userId: user.id, createdAt: new Date().toISOString() };
+  all.push(newG);
+  setStore(GOALS_KEY, all);
+  return newG;
+}
+
+export function updateGoal(id, updates) {
+  const all = getStore(GOALS_KEY) || [];
+  const idx = all.findIndex(g => g.id === id);
+  if (idx !== -1) { all[idx] = { ...all[idx], ...updates, updatedAt: new Date().toISOString() }; setStore(GOALS_KEY, all); }
+}
+
+export function deleteGoal(id) {
+  setStore(GOALS_KEY, (getStore(GOALS_KEY) || []).filter(g => g.id !== id));
+}
