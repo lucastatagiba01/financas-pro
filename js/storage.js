@@ -558,3 +558,35 @@ export function updateGoal(id, updates) {
 export function deleteGoal(id) {
   setStore(GOALS_KEY, (getStore(GOALS_KEY) || []).filter(g => g.id !== id));
 }
+
+// ── Financial Plan (Planejamento Financeiro) ───────────────────────────────
+const PLAN_KEY = 'fp_financial_plan';
+
+const DEFAULT_PLAN = {
+  idealCreditSpend:    0,
+  maxCreditLimit:      0,
+  monthlyInvestment:   0,
+  nonCreditExpenses:   [], // [{ id, name, amount }]
+};
+
+export function getFinancialPlan() {
+  const user = getCurrentUser();
+  if (!user) return { ...DEFAULT_PLAN };
+  const all = getStore(PLAN_KEY) || [];
+  const plan = all.find(p => p.userId === user.id);
+  return plan ? { ...DEFAULT_PLAN, ...plan } : { ...DEFAULT_PLAN, userId: user.id };
+}
+
+export function saveFinancialPlan(updates) {
+  const user = getCurrentUser();
+  if (!user) return;
+  const all = getStore(PLAN_KEY) || [];
+  const idx = all.findIndex(p => p.userId === user.id);
+  const now = new Date().toISOString();
+  if (idx !== -1) {
+    all[idx] = { ...all[idx], ...updates, updatedAt: now };
+  } else {
+    all.push({ ...DEFAULT_PLAN, ...updates, userId: user.id, createdAt: now, updatedAt: now });
+  }
+  setStore(PLAN_KEY, all);
+}
