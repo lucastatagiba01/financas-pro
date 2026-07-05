@@ -3,7 +3,7 @@
 // ============================================
 
 import { icons, formatCurrency, formatDate, escapeHtml, getTodayStr } from '../utils.js';
-import { getFilteredTransactions, getCategories, getCategoryById, addTransaction, updateTransaction, deleteTransaction } from '../storage.js';
+import { getFilteredTransactions, getCategories, getCategoryById, addTransaction, updateTransaction, deleteTransaction, getBanks } from '../storage.js';
 import { getFilterDates, renderFilter, onFilterChange } from '../components/filters.js';
 import { renderSidebar, bindSidebarEvents } from '../components/sidebar.js';
 import { renderHeader, bindHeaderEvents } from '../components/header.js';
@@ -65,6 +65,7 @@ function renderTransactionsList() {
   if (!container) return;
 
   const dates = getFilterDates();
+  const banks = getBanks();
   let transactions = getFilteredTransactions(dates.start, dates.end);
 
   // Apply search
@@ -109,11 +110,13 @@ function renderTransactionsList() {
           </thead>
           <tbody>
             ${transactions.map(t => {
-              const cat = getCategoryById(t.categoryId);
+              const cat  = getCategoryById(t.categoryId);
+              const bank = banks.find(b => b.id === t.bankId);
               return `
                 <tr>
                   <td>
                     <span class="transaction-desc">${escapeHtml(t.description)}</span>
+                    ${bank ? `<div style="display:inline-flex;align-items:center;gap:3px;margin-top:2px;font-size:10px;font-weight:600;color:${bank.color||'#64748B'};"><span style="width:6px;height:6px;border-radius:50%;background:${bank.color||'#64748B'};display:inline-block;"></span>${escapeHtml(bank.name)}</div>` : ''}
                   </td>
                   <td>
                     <div class="transaction-category">
@@ -172,8 +175,15 @@ function renderTransactionsList() {
 
 function openTransactionModal(editTx = null) {
   const categories = getCategories();
-  const isEdit = !!editTx;
-  const title = isEdit ? 'Editar Movimentação' : 'Nova Movimentação';
+  const banks      = getBanks();
+  const isEdit     = !!editTx;
+  const title      = isEdit ? 'Editar Movimentação' : 'Nova Movimentação';
+
+  const bankOptions = banks.map(b => `
+    <option value="${b.id}" ${isEdit && editTx.bankId === b.id ? 'selected' : ''}>
+      ${escapeHtml(b.name)}
+    </option>
+  `).join('');
 
   const body = `
     <form id="tx-form">
@@ -216,6 +226,20 @@ function openTransactionModal(editTx = null) {
           <span class="toggle-option ${isEdit && editTx.nature === 'fixed' ? 'active' : ''}" data-value="fixed">Fixo</span>
         </div>
       </div>
+
+      ${banks.length > 0 ? `
+      <div class="form-group">
+        <label class="form-label" style="display:flex;align-items:center;gap:6px;">
+          ${icons.balance}
+          Banco / Conta
+          <span style="color:var(--color-gray-400);font-weight:normal;font-size:var(--font-size-xs);">(opcional)</span>
+        </label>
+        <select class="form-input" id="tx-bank">
+          <option value="">— Nenhum —</option>
+          ${bankOptions}
+        </select>
+      </div>
+      ` : ''}
     </form>
   `;
 
@@ -247,11 +271,12 @@ function openTransactionModal(editTx = null) {
   // Save
   document.getElementById('tx-save').addEventListener('click', () => {
     const description = document.getElementById('tx-description').value.trim();
-    const categoryId = document.getElementById('tx-category').value;
-    const amount = parseFloat(document.getElementById('tx-amount').value);
-    const date = document.getElementById('tx-date').value;
-    const type = document.querySelector('#tx-type-toggle .active')?.dataset.value || 'expense';
-    const nature = document.querySelector('#tx-nature-toggle .active')?.dataset.value || 'variable';
+    const categoryId  = document.getElementById('tx-category').value;
+    const amount      = parseFloat(document.getElementById('tx-amount').value);
+    const date        = document.getElementById('tx-date').value;
+    const type        = document.querySelector('#tx-type-toggle .active')?.dataset.value || 'expense';
+    const nature      = document.querySelector('#tx-nature-toggle .active')?.dataset.value || 'variable';
+    const bankId      = document.getElementById('tx-bank')?.value || null;
 
     if (!description || !categoryId || !amount || !date) {
       showToast('Preencha todos os campos', 'error');
@@ -259,10 +284,10 @@ function openTransactionModal(editTx = null) {
     }
 
     if (isEdit) {
-      updateTransaction(editTx.id, { description, categoryId, amount, date, type, nature });
+      updateTransaction(editTx.id, { description, categoryId, amount, date, type, nature, bankId });
       showToast('Movimentação atualizada!', 'success');
     } else {
-      addTransaction({ description, categoryId, amount, date, type, nature });
+      addTransaction({ description, categoryId, amount, date, type, nature, bankId });
       showToast('Movimentação adicionada!', 'success');
     }
 
