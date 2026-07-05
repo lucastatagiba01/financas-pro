@@ -291,40 +291,20 @@ function renderIncomeQuadrant(rendaNecessaria, maxCredit, nonCreditTotal, invest
             Sem movimentações registradas em ${lmLabel}.
           </div>
         ` : `
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);">
-
-            <!-- Receita vs meta -->
-            <div style="padding:var(--space-4);border-radius:12px;background:${metaAtingida ? '#22C55E12' : '#EF444412'};border:1px solid ${metaAtingida ? '#22C55E30' : '#EF444430'};">
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--space-2);">
-                <div style="font-size:var(--font-size-xs);color:var(--color-gray-500);font-weight:600;">Receita do mês</div>
-                <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:${metaAtingida ? '#22C55E' : '#EF4444'};color:white;">
-                  ${metaAtingida ? '✓ Meta atingida' : '✗ Abaixo da meta'}
-                </span>
-              </div>
-              <div style="font-size:var(--font-size-xl);font-weight:800;color:${metaAtingida ? '#22C55E' : '#EF4444'};">${formatCurrency(lmIncome)}</div>
-              <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:4px;">
-                ${incomeGap >= 0
-                  ? `<span style="color:#22C55E;">+${formatCurrency(incomeGap)} acima da meta</span>`
-                  : `<span style="color:#EF4444;">${formatCurrency(Math.abs(incomeGap))} abaixo da meta</span>`}
-              </div>
+          <!-- Receita vs meta -->
+          <div style="padding:var(--space-4);border-radius:12px;background:${metaAtingida ? '#22C55E12' : '#EF444412'};border:1px solid ${metaAtingida ? '#22C55E30' : '#EF444430'};">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--space-2);">
+              <div style="font-size:var(--font-size-xs);color:var(--color-gray-500);font-weight:600;">Receita do mês</div>
+              <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:${metaAtingida ? '#22C55E' : '#EF4444'};color:white;">
+                ${metaAtingida ? '✓ Meta atingida' : '✗ Abaixo da meta'}
+              </span>
             </div>
-
-            <!-- Gastos vs limite -->
-            <div style="padding:var(--space-4);border-radius:12px;background:${gastoOk ? '#22C55E12' : '#EF444412'};border:1px solid ${gastoOk ? '#22C55E30' : '#EF444430'};">
-              <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--space-2);">
-                <div style="font-size:var(--font-size-xs);color:var(--color-gray-500);font-weight:600;">Gastos do mês</div>
-                <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:${gastoOk ? '#22C55E' : '#EF4444'};color:white;">
-                  ${gastoOk ? '✓ Dentro do limite' : '✗ Limite excedido'}
-                </span>
-              </div>
-              <div style="font-size:var(--font-size-xl);font-weight:800;color:${gastoOk ? '#22C55E' : '#EF4444'};">${formatCurrency(lmExpenses)}</div>
-              <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:4px;">
-                ${expenseGap >= 0
-                  ? `<span style="color:#22C55E;">${formatCurrency(expenseGap)} de margem</span>`
-                  : `<span style="color:#EF4444;">${formatCurrency(Math.abs(expenseGap))} acima do limite</span>`}
-              </div>
+            <div style="font-size:var(--font-size-xl);font-weight:800;color:${metaAtingida ? '#22C55E' : '#EF4444'};">${formatCurrency(lmIncome)}</div>
+            <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:4px;">
+              ${incomeGap >= 0
+                ? `<span style="color:#22C55E;">+${formatCurrency(incomeGap)} acima da meta</span>`
+                : `<span style="color:#EF4444;">${formatCurrency(Math.abs(incomeGap))} abaixo da meta</span>`}
             </div>
-
           </div>
         `}
       </div>
