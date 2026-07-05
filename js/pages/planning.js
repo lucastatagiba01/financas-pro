@@ -3,7 +3,7 @@
 // ============================================
 
 import { icons, formatCurrency, escapeHtml } from '../utils.js';
-import { getFinancialPlan, saveFinancialPlan } from '../storage.js';
+import { getFinancialPlan, saveFinancialPlan, getUserTransactions } from '../storage.js';
 import { renderSidebar, bindSidebarEvents } from '../components/sidebar.js';
 import { renderHeader, bindHeaderEvents } from '../components/header.js';
 import { openModal, closeModal } from '../components/modal.js';
@@ -43,6 +43,20 @@ function renderPlanningContent() {
   const plan = getFinancialPlan();
   const nonCreditTotal  = (plan.nonCreditExpenses || []).reduce((s, e) => s + (e.amount || 0), 0);
   const rendaNecessaria = plan.maxCreditLimit + nonCreditTotal + (plan.monthlyInvestment || 0);
+
+  // Last month date range
+  const now = new Date();
+  const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lmYear  = lastMonthDate.getFullYear();
+  const lmMonth = String(lastMonthDate.getMonth() + 1).padStart(2, '0');
+  const lmStart = `${lmYear}-${lmMonth}-01`;
+  const lmEnd   = `${lmYear}-${lmMonth}-${String(new Date(lmYear, lastMonthDate.getMonth() + 1, 0).getDate()).padStart(2, '0')}`;
+  const lmLabel = lastMonthDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+
+  const allTx      = getUserTransactions();
+  const lmTx       = allTx.filter(t => t.date >= lmStart && t.date <= lmEnd);
+  const lmIncome   = lmTx.filter(t => t.type === 'income').reduce((s, t)  => s + t.amount, 0);
+  const lmExpenses = lmTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
 
   container.innerHTML = `
     <!-- Page header -->
@@ -93,7 +107,7 @@ function renderPlanningContent() {
     </div>
 
     <!-- Renda necessária — full width abaixo -->
-    ${renderIncomeQuadrant(rendaNecessaria, plan.maxCreditLimit, nonCreditTotal, plan.monthlyInvestment || 0)}
+    ${renderIncomeQuadrant(rendaNecessaria, plan.maxCreditLimit, nonCreditTotal, plan.monthlyInvestment || 0, lmIncome, lmExpenses, lmLabel)}
   `;
 
   // Bind value quadrant edit buttons
@@ -218,7 +232,13 @@ function renderNonCreditQuadrant(expenses, total) {
 
 // ── Quadrant: renda necessária (calculada) ────────────────────────────────────
 
-function renderIncomeQuadrant(rendaNecessaria, maxCredit, nonCreditTotal, investment) {
+function renderIncomeQuadrant(rendaNecessaria, maxCredit, nonCreditTotal, investment, lmIncome, lmExpenses, lmLabel) {
+  const metaAtingida   = lmIncome >= rendaNecessaria;
+  const gastoOk        = lmExpenses <= maxCredit;
+  const incomeGap      = lmIncome - rendaNecessaria;
+  const expenseGap     = maxCredit - lmExpenses;
+  const hasLastMonth   = lmIncome > 0 || lmExpenses > 0;
+
   return `
     <div class="card animate-fade-in-up" style="padding:0;overflow:hidden;">
       <!-- Header band -->
@@ -235,8 +255,8 @@ function renderIncomeQuadrant(rendaNecessaria, maxCredit, nonCreditTotal, invest
         </div>
       </div>
 
-      <!-- Breakdown row -->
-      <div style="padding:var(--space-4) var(--space-5);display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);">
+      <!-- Breakdown planejado -->
+      <div style="padding:var(--space-4) var(--space-5) var(--space-3);display:grid;grid-template-columns:repeat(3,1fr);gap:var(--space-3);">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-3) var(--space-4);background:var(--color-gray-50);border-radius:10px;border-left:3px solid #EF4444;">
           <div>
             <div style="font-size:10px;color:var(--color-gray-400);margin-bottom:2px;">Limite máximo no crédito</div>
@@ -258,6 +278,55 @@ function renderIncomeQuadrant(rendaNecessaria, maxCredit, nonCreditTotal, invest
           </div>
           <span style="font-size:1.2rem;">📈</span>
         </div>
+      </div>
+
+      <!-- Mês anterior -->
+      <div style="margin:0 var(--space-5) var(--space-5);border-top:1px solid var(--color-gray-100);padding-top:var(--space-4);">
+        <div style="font-size:var(--font-size-xs);font-weight:700;color:var(--color-gray-400);text-transform:uppercase;letter-spacing:.5px;margin-bottom:var(--space-3);">
+          📅 Resultado do mês anterior — ${lmLabel}
+        </div>
+
+        ${!hasLastMonth ? `
+          <div style="text-align:center;padding:var(--space-4);color:var(--color-gray-300);font-size:var(--font-size-sm);">
+            Sem movimentações registradas em ${lmLabel}.
+          </div>
+        ` : `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);">
+
+            <!-- Receita vs meta -->
+            <div style="padding:var(--space-4);border-radius:12px;background:${metaAtingida ? '#22C55E12' : '#EF444412'};border:1px solid ${metaAtingida ? '#22C55E30' : '#EF444430'};">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--space-2);">
+                <div style="font-size:var(--font-size-xs);color:var(--color-gray-500);font-weight:600;">Receita do mês</div>
+                <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:${metaAtingida ? '#22C55E' : '#EF4444'};color:white;">
+                  ${metaAtingida ? '✓ Meta atingida' : '✗ Abaixo da meta'}
+                </span>
+              </div>
+              <div style="font-size:var(--font-size-xl);font-weight:800;color:${metaAtingida ? '#22C55E' : '#EF4444'};">${formatCurrency(lmIncome)}</div>
+              <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:4px;">
+                ${incomeGap >= 0
+                  ? `<span style="color:#22C55E;">+${formatCurrency(incomeGap)} acima da meta</span>`
+                  : `<span style="color:#EF4444;">${formatCurrency(Math.abs(incomeGap))} abaixo da meta</span>`}
+              </div>
+            </div>
+
+            <!-- Gastos vs limite -->
+            <div style="padding:var(--space-4);border-radius:12px;background:${gastoOk ? '#22C55E12' : '#EF444412'};border:1px solid ${gastoOk ? '#22C55E30' : '#EF444430'};">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:var(--space-2);">
+                <div style="font-size:var(--font-size-xs);color:var(--color-gray-500);font-weight:600;">Gastos do mês</div>
+                <span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:${gastoOk ? '#22C55E' : '#EF4444'};color:white;">
+                  ${gastoOk ? '✓ Dentro do limite' : '✗ Limite excedido'}
+                </span>
+              </div>
+              <div style="font-size:var(--font-size-xl);font-weight:800;color:${gastoOk ? '#22C55E' : '#EF4444'};">${formatCurrency(lmExpenses)}</div>
+              <div style="font-size:var(--font-size-xs);color:var(--color-gray-400);margin-top:4px;">
+                ${expenseGap >= 0
+                  ? `<span style="color:#22C55E;">${formatCurrency(expenseGap)} de margem</span>`
+                  : `<span style="color:#EF4444;">${formatCurrency(Math.abs(expenseGap))} acima do limite</span>`}
+              </div>
+            </div>
+
+          </div>
+        `}
       </div>
     </div>
   `;
