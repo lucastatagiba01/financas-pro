@@ -7,15 +7,35 @@ import { getSession, logout } from '../auth.js';
 import { navigate, getCurrentRoute } from '../router.js';
 import { getSelectedMode, clearSelectedMode } from '../storage.js';
 
-const NAV_ITEMS_FINANCIAL = [
-  { path: '/dashboard',    label: 'Dashboard',         icon: 'dashboard' },
-  { path: '/transactions', label: 'Movimentações',     icon: 'transactions' },
-  { path: '/analysis',     label: 'Análise',           icon: 'analysis' },
-  { path: '/reports',      label: 'Relatórios',        icon: 'reports' },
-  { path: '/planning',     label: 'Planejamento',      icon: 'reports' },
-  { path: '/goals',        label: 'Metas',             icon: 'trendingUp' },
-  { path: '/fixed',        label: 'Gastos Fixos',      icon: 'fixed' },
-  { path: '/categories',   label: 'Categorias',        icon: 'categories' },
+const NAV_SECTIONS_FINANCIAL = [
+  {
+    title: 'Visão Geral',
+    items: [
+      { path: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
+    ],
+  },
+  {
+    title: 'Finanças',
+    items: [
+      { path: '/transactions', label: 'Movimentações', icon: 'transactions' },
+      { path: '/analysis',     label: 'Análise',       icon: 'analysis'      },
+      { path: '/reports',      label: 'Relatórios',    icon: 'reports'       },
+      { path: '/fixed',        label: 'Gastos Fixos',  icon: 'fixed'         },
+    ],
+  },
+  {
+    title: 'Planejamento',
+    items: [
+      { path: '/planning', label: 'Planejamento Financeiro', icon: 'reports'     },
+      { path: '/goals',    label: 'Metas',                   icon: 'trendingUp'  },
+    ],
+  },
+  {
+    title: 'Configurações',
+    items: [
+      { path: '/categories', label: 'Categorias', icon: 'categories' },
+    ],
+  },
 ];
 
 const NAV_ITEMS_INVESTMENTS = [
@@ -31,11 +51,38 @@ export function renderSidebar() {
   const user = getSession();
   const currentPath = getCurrentRoute();
   const selectedMode = getSelectedMode();
-  const navItems = selectedMode === 'INVESTMENTS' ? NAV_ITEMS_INVESTMENTS : NAV_ITEMS_FINANCIAL;
   const initials = user ? user.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() : '??';
   const modeLabel = selectedMode === 'INVESTMENTS' ? 'Investimentos' : 'Financeiro';
-  const otherMode = selectedMode === 'INVESTMENTS' ? 'FINANCIAL' : 'INVESTMENTS';
   const otherModeLabel = selectedMode === 'INVESTMENTS' ? 'Financeiro' : 'Investimentos';
+
+  const renderNavItem = (item) => {
+    if (item.tab) {
+      const activeTab = sessionStorage.getItem('invActiveTab') || 'carteira';
+      const isActive  = currentPath === item.path && activeTab === item.tab;
+      return `
+        <button class="nav-item ${isActive ? 'active' : ''} ${item.sub ? 'nav-item-sub' : ''}" data-inv-tab="${item.tab}">
+          ${icons[item.icon]}
+          <span>${item.label}</span>
+        </button>`;
+    }
+    return `
+      <a class="nav-item ${currentPath === item.path ? 'active' : ''}" data-route="${item.path}" href="#${item.path}">
+        ${icons[item.icon]}
+        <span>${item.label}</span>
+      </a>`;
+  };
+
+  const navContent = selectedMode === 'INVESTMENTS'
+    ? `<div class="sidebar-section">
+        <div class="sidebar-section-title">Investimentos</div>
+        ${NAV_ITEMS_INVESTMENTS.map(renderNavItem).join('')}
+       </div>`
+    : NAV_SECTIONS_FINANCIAL.map(section => `
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">${section.title}</div>
+          ${section.items.map(renderNavItem).join('')}
+        </div>
+      `).join('');
 
   return `
     <aside class="sidebar" id="sidebar">
@@ -46,25 +93,7 @@ export function renderSidebar() {
       </div>
 
       <nav class="sidebar-nav">
-        <div class="sidebar-section">
-          <div class="sidebar-section-title">Menu</div>
-          ${navItems.map(item => {
-            if (item.tab) {
-              const activeTab = sessionStorage.getItem('invActiveTab') || 'carteira';
-              const isActive = currentPath === item.path && activeTab === item.tab;
-              return `
-                <button class="nav-item ${isActive ? 'active' : ''} ${item.sub ? 'nav-item-sub' : ''}" data-inv-tab="${item.tab}">
-                  ${icons[item.icon]}
-                  <span>${item.label}</span>
-                </button>`;
-            }
-            return `
-              <a class="nav-item ${currentPath === item.path ? 'active' : ''}" data-route="${item.path}" href="#${item.path}">
-                ${icons[item.icon]}
-                <span>${item.label}</span>
-              </a>`;
-          }).join('')}
-        </div>
+        ${navContent}
 
         <div class="sidebar-section">
           <div class="sidebar-section-title">Modo</div>
