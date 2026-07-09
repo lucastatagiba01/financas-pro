@@ -72,17 +72,43 @@ export function renderSidebar() {
       </a>`;
   };
 
+  // Check if a section contains the active route (force it open)
+  const sectionHasActive = (section) =>
+    section.items.some(i => i.path === currentPath);
+
+  const getSectionOpen = (section) => {
+    const key = `sidebar-section-${section.title}`;
+    const stored = sessionStorage.getItem(key);
+    if (stored !== null) return stored === 'true';
+    return true; // default open
+  };
+
+  const chevron = (open) => `
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="transition:transform .25s;transform:rotate(${open ? '0' : '-90'}deg);flex-shrink:0;">
+      <path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+
   const navContent = selectedMode === 'INVESTMENTS'
     ? `<div class="sidebar-section">
         <div class="sidebar-section-title">Investimentos</div>
         ${NAV_ITEMS_INVESTMENTS.map(renderNavItem).join('')}
        </div>`
-    : NAV_SECTIONS_FINANCIAL.map(section => `
-        <div class="sidebar-section">
-          <div class="sidebar-section-title">${section.title}</div>
-          ${section.items.map(renderNavItem).join('')}
-        </div>
-      `).join('');
+    : NAV_SECTIONS_FINANCIAL.map(section => {
+        const open = getSectionOpen(section) || sectionHasActive(section);
+        const key  = section.title;
+        return `
+          <div class="sidebar-section sidebar-collapsible" data-section-key="${key}">
+            <button class="sidebar-section-toggle" data-section-key="${key}"
+              style="display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:none;cursor:pointer;padding:0;margin-bottom:${open ? 'var(--space-1)' : '0'};">
+              <span class="sidebar-section-title" style="margin-bottom:0;">${key}</span>
+              <span class="sidebar-chevron" data-section-key="${key}">${chevron(open)}</span>
+            </button>
+            <div class="sidebar-section-items" data-section-key="${key}"
+              style="overflow:hidden;transition:max-height .25s ease;max-height:${open ? '500px' : '0px'};">
+              ${section.items.map(renderNavItem).join('')}
+            </div>
+          </div>`;
+      }).join('');
 
   return `
     <aside class="sidebar" id="sidebar">
@@ -151,6 +177,23 @@ export function bindSidebarEvents() {
   if (overlay) {
     overlay.addEventListener('click', closeSidebar);
   }
+
+  // Collapsible section toggles
+  document.querySelectorAll('.sidebar-section-toggle').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key     = btn.dataset.sectionKey;
+      const items   = document.querySelector(`.sidebar-section-items[data-section-key="${key}"]`);
+      const chevron = document.querySelector(`.sidebar-chevron[data-section-key="${key}"] svg`);
+      const isOpen  = items.style.maxHeight !== '0px';
+      const nowOpen = !isOpen;
+
+      items.style.maxHeight  = nowOpen ? '500px' : '0px';
+      btn.style.marginBottom = nowOpen ? 'var(--space-1)' : '0';
+      if (chevron) chevron.style.transform = `rotate(${nowOpen ? '0' : '-90'}deg)`;
+      sessionStorage.setItem(`sidebar-section-${key}`, String(nowOpen));
+    });
+  });
 
   // Investment sub-tab clicks
   document.querySelectorAll('[data-inv-tab]').forEach(btn => {
