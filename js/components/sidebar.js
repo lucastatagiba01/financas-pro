@@ -131,7 +131,7 @@ export function renderSidebar() {
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="sidebar-logo">F</div>
-        <div class="sidebar-brand">Finanças<span>Pro</span></div>
+        <div class="sidebar-brand">Money<span>Map</span></div>
         <div class="sidebar-mode-badge" title="Modo atual">${modeLabel}</div>
       </div>
 

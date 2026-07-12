@@ -13,8 +13,8 @@ export function renderLogin() {
   app.innerHTML = `
     <div class="auth-page">
       <div class="auth-brand">
-        <div class="auth-logo">F</div>
-        <h1 class="auth-title">Finanças<span>Pro</span></h1>
+        <div class="auth-logo">M</div>
+        <h1 class="auth-title">Money<span>Map</span></h1>
         <p class="auth-tagline">Controle financeiro inteligente e simples</p>
       </div>
 
