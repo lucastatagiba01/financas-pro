@@ -55,7 +55,7 @@ const NAV_SECTIONS_INVESTMENTS = [
     ],
   },
   {
-    title: 'Ações',
+    title: 'Gerenciar',
     items: [
       { path: '/investments', label: 'Adicionar', icon: 'plus', tab: 'formulario', sub: true },
     ],
