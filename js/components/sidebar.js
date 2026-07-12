@@ -38,13 +38,28 @@ const NAV_SECTIONS_FINANCIAL = [
   },
 ];
 
-const NAV_ITEMS_INVESTMENTS = [
-  { path: '/investments', label: 'Minha Carteira', icon: 'wallet',      tab: 'carteira'   },
-  { path: '/investments', label: 'Renda Fixa',     icon: 'balance',     tab: 'rf',         sub: true },
-  { path: '/investments', label: 'Tesouro Direto', icon: 'balance',     tab: 'td',         sub: true },
-  { path: '/investments', label: 'Renda Variável', icon: 'trendingUp',  tab: 'rv',         sub: true },
-  { path: '/investments', label: 'Fundos',          icon: 'balance',     tab: 'fundos',     sub: true },
-  { path: '/investments', label: 'Adicionar',      icon: 'plus',        tab: 'formulario', sub: true },
+const NAV_SECTIONS_INVESTMENTS = [
+  {
+    title: 'Visão Geral',
+    items: [
+      { path: '/investments', label: 'Minha Carteira', icon: 'wallet', tab: 'carteira' },
+    ],
+  },
+  {
+    title: 'Ativos',
+    items: [
+      { path: '/investments', label: 'Renda Fixa',     icon: 'balance',    tab: 'rf',     sub: true },
+      { path: '/investments', label: 'Tesouro Direto', icon: 'balance',    tab: 'td',     sub: true },
+      { path: '/investments', label: 'Renda Variável', icon: 'trendingUp', tab: 'rv',     sub: true },
+      { path: '/investments', label: 'Fundos',         icon: 'balance',    tab: 'fundos', sub: true },
+    ],
+  },
+  {
+    title: 'Ações',
+    items: [
+      { path: '/investments', label: 'Adicionar', icon: 'plus', tab: 'formulario', sub: true },
+    ],
+  },
 ];
 
 export function renderSidebar() {
@@ -72,9 +87,11 @@ export function renderSidebar() {
       </a>`;
   };
 
-  // Check if a section contains the active route (force it open)
+  const activeTab = sessionStorage.getItem('invActiveTab') || 'carteira';
+
+  // Check if a section has the active route/tab
   const sectionHasActive = (section) =>
-    section.items.some(i => i.path === currentPath);
+    section.items.some(i => i.path ? i.path === currentPath : i.tab === activeTab);
 
   const getSectionOpen = (section) => {
     const key = `sidebar-section-${section.title}`;
@@ -88,27 +105,27 @@ export function renderSidebar() {
       <path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>`;
 
+  const renderCollapsibleSections = (sections) =>
+    sections.map(section => {
+      const open = getSectionOpen(section) || sectionHasActive(section);
+      const key  = section.title;
+      return `
+        <div class="sidebar-section sidebar-collapsible" data-section-key="${key}">
+          <button class="sidebar-section-toggle" data-section-key="${key}"
+            style="display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:none;cursor:pointer;padding:0;margin-bottom:${open ? 'var(--space-1)' : '0'};">
+            <span class="sidebar-section-title" style="margin-bottom:0;">${key}</span>
+            <span class="sidebar-chevron" data-section-key="${key}">${chevron(open)}</span>
+          </button>
+          <div class="sidebar-section-items" data-section-key="${key}"
+            style="overflow:hidden;transition:max-height .25s ease;max-height:${open ? '500px' : '0px'};">
+            ${section.items.map(renderNavItem).join('')}
+          </div>
+        </div>`;
+    }).join('');
+
   const navContent = selectedMode === 'INVESTMENTS'
-    ? `<div class="sidebar-section">
-        <div class="sidebar-section-title">Investimentos</div>
-        ${NAV_ITEMS_INVESTMENTS.map(renderNavItem).join('')}
-       </div>`
-    : NAV_SECTIONS_FINANCIAL.map(section => {
-        const open = getSectionOpen(section) || sectionHasActive(section);
-        const key  = section.title;
-        return `
-          <div class="sidebar-section sidebar-collapsible" data-section-key="${key}">
-            <button class="sidebar-section-toggle" data-section-key="${key}"
-              style="display:flex;align-items:center;justify-content:space-between;width:100%;background:none;border:none;cursor:pointer;padding:0;margin-bottom:${open ? 'var(--space-1)' : '0'};">
-              <span class="sidebar-section-title" style="margin-bottom:0;">${key}</span>
-              <span class="sidebar-chevron" data-section-key="${key}">${chevron(open)}</span>
-            </button>
-            <div class="sidebar-section-items" data-section-key="${key}"
-              style="overflow:hidden;transition:max-height .25s ease;max-height:${open ? '500px' : '0px'};">
-              ${section.items.map(renderNavItem).join('')}
-            </div>
-          </div>`;
-      }).join('');
+    ? renderCollapsibleSections(NAV_SECTIONS_INVESTMENTS)
+    : renderCollapsibleSections(NAV_SECTIONS_FINANCIAL);
 
   return `
     <aside class="sidebar" id="sidebar">
