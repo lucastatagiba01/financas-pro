@@ -138,23 +138,6 @@ export function renderSidebar() {
       <nav class="sidebar-nav">
         ${navContent}
 
-        <div class="sidebar-section">
-          <div class="sidebar-section-title">Modo</div>
-          <div style="display:flex;background:rgba(0,0,0,.12);border-radius:8px;padding:3px;gap:2px;">
-            <button id="btn-mode-financial"
-              style="flex:1;padding:7px 0;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500;transition:all .2s;
-                background:${selectedMode === 'FINANCIAL' ? 'rgba(255,255,255,.18)' : 'transparent'};
-                color:${selectedMode === 'FINANCIAL' ? 'white' : 'rgba(255,255,255,.5)'};">
-              Financeiro
-            </button>
-            <button id="btn-mode-investments"
-              style="flex:1;padding:7px 0;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500;transition:all .2s;
-                background:${selectedMode === 'INVESTMENTS' ? 'rgba(255,255,255,.18)' : 'transparent'};
-                color:${selectedMode === 'INVESTMENTS' ? 'white' : 'rgba(255,255,255,.5)'};">
-              Investimentos
-            </button>
-          </div>
-        </div>
       </nav>
 
       <div class="sidebar-footer">
@@ -185,21 +168,6 @@ export function bindSidebarEvents() {
     });
   }
 
-  // Mode pill toggle
-  const switchMode = (newMode) => {
-    import('../storage.js').then(({ setSelectedMode }) => {
-      setSelectedMode(newMode);
-      navigate(newMode === 'FINANCIAL' ? '/dashboard' : '/investments');
-    });
-  };
-  document.getElementById('btn-mode-financial')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (getSelectedMode() !== 'FINANCIAL') switchMode('FINANCIAL');
-  });
-  document.getElementById('btn-mode-investments')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (getSelectedMode() !== 'INVESTMENTS') switchMode('INVESTMENTS');
-  });
 
   // Mobile overlay close
   const overlay = document.getElementById('sidebar-overlay');
