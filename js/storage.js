@@ -590,3 +590,53 @@ export function saveFinancialPlan(updates) {
   }
   setStore(PLAN_KEY, all);
 }
+
+// ── Investment Accounts ────────────────────────────────────────────────────────
+const INV_ACCOUNTS_KEY = 'fp_inv_accounts';
+const INV_ACCOUNT_MOVEMENTS_KEY = 'fp_inv_account_movements';
+
+export function getInvAccounts() {
+  const user = getCurrentUser();
+  if (!user) return [];
+  return (getStore(INV_ACCOUNTS_KEY) || []).filter(a => a.userId === user.id);
+}
+
+export function addInvAccount(account) {
+  const all  = getStore(INV_ACCOUNTS_KEY) || [];
+  const user = getCurrentUser();
+  const newA = { ...account, id: generateId(), userId: user.id, createdAt: new Date().toISOString() };
+  all.push(newA);
+  setStore(INV_ACCOUNTS_KEY, all);
+  return newA;
+}
+
+export function updateInvAccount(id, updates) {
+  const all = getStore(INV_ACCOUNTS_KEY) || [];
+  const idx = all.findIndex(a => a.id === id);
+  if (idx !== -1) { all[idx] = { ...all[idx], ...updates, updatedAt: new Date().toISOString() }; setStore(INV_ACCOUNTS_KEY, all); }
+}
+
+export function deleteInvAccount(id) {
+  setStore(INV_ACCOUNTS_KEY, (getStore(INV_ACCOUNTS_KEY) || []).filter(a => a.id !== id));
+  setStore(INV_ACCOUNT_MOVEMENTS_KEY, (getStore(INV_ACCOUNT_MOVEMENTS_KEY) || []).filter(m => m.accountId !== id));
+}
+
+export function getInvAccountMovements(accountId) {
+  const user = getCurrentUser();
+  if (!user) return [];
+  const all = (getStore(INV_ACCOUNT_MOVEMENTS_KEY) || []).filter(m => m.userId === user.id);
+  return accountId ? all.filter(m => m.accountId === accountId) : all;
+}
+
+export function addInvAccountMovement(movement) {
+  const all  = getStore(INV_ACCOUNT_MOVEMENTS_KEY) || [];
+  const user = getCurrentUser();
+  const newM = { ...movement, id: generateId(), userId: user.id, createdAt: new Date().toISOString() };
+  all.push(newM);
+  setStore(INV_ACCOUNT_MOVEMENTS_KEY, all);
+  return newM;
+}
+
+export function deleteInvAccountMovement(id) {
+  setStore(INV_ACCOUNT_MOVEMENTS_KEY, (getStore(INV_ACCOUNT_MOVEMENTS_KEY) || []).filter(m => m.id !== id));
+}

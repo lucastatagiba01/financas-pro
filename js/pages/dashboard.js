@@ -346,17 +346,10 @@ function openBankModal(bank) {
           ${BANK_PRESETS.map(p => `<option value="${p.key}" data-color="${p.color}" ${bank?.bankKey===p.key?'selected':''}>${p.name}</option>`).join('')}
         </select>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-3);">
-        <div class="form-group">
-          <label class="form-label">Nome *</label>
-          <input type="text" id="bank-name" class="form-input" placeholder="Ex: Nubank" value="${escapeHtml(bank?.name||'')}" required>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Tipo de conta *</label>
-          <select id="bank-type" class="form-input">
-            ${Object.entries(ACCOUNT_TYPE_LABELS).map(([k,v]) => `<option value="${k}" ${bank?.accountType===k?'selected':''}>${v}</option>`).join('')}
-          </select>
-        </div>
+      <div class="form-group">
+        <label class="form-label">Nome *</label>
+        <input type="text" id="bank-name" class="form-input" placeholder="Ex: Nubank" value="${escapeHtml(bank?.name||'')}" required>
+        <input type="hidden" id="bank-type" value="corrente">
       </div>
       <div class="form-group">
         <label class="form-label">Saldo atual (R$)</label>

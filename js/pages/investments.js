@@ -16,6 +16,8 @@ import {
   getDivConfirmations, confirmDividend, deleteDivConfirmation,
   getTDCouponConfirms, confirmTDCoupon, deleteTDCouponConfirm,
   addTransaction, getTransactions,
+  getInvAccounts, addInvAccount, updateInvAccount, deleteInvAccount,
+  getInvAccountMovements, addInvAccountMovement, deleteInvAccountMovement,
 } from '../storage.js';
 import { renderSidebar, bindSidebarEvents } from '../components/sidebar.js';
 import { renderHeader, bindHeaderEvents } from '../components/header.js';
@@ -65,6 +67,248 @@ const STAT_ICONS = {
   dollar:   `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>`,
   clock:    `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
 };
+
+// ── Investment Accounts ──
+
+const INV_ACCOUNT_PRESETS = [
+  { name: 'XP Investimentos', color: '#1A1A2E' },
+  { name: 'BTG Pactual',      color: '#0D2B5E' },
+  { name: 'Rico',             color: '#E63900' },
+  { name: 'Clear',            color: '#1E90FF' },
+  { name: 'Nu Invest',        color: '#820AD1' },
+  { name: 'Inter Invest',     color: '#FF7A00' },
+  { name: 'Avenue',           color: '#006FC0' },
+  { name: 'Genial',           color: '#F59E0B' },
+  { name: 'Outra corretora',  color: '#64748B' },
+];
+
+const INV_ACCOUNT_COLORS = [
+  '#1A1A2E','#0D2B5E','#E63900','#1E90FF','#820AD1',
+  '#FF7A00','#006FC0','#10B981','#3B82F6','#64748B',
+];
+
+function darkenHex(hex, amount = 40) {
+  const h   = (hex || '#333').replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const num  = parseInt(full, 16);
+  const r = Math.max(0, (num >> 16) - amount);
+  const g = Math.max(0, ((num >> 8) & 0xff) - amount);
+  const b = Math.max(0, (num & 0xff) - amount);
+  return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+}
+
+function invAccountInitials(name = '') {
+  return name.split(/\s+/).filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase() || '?';
+}
+
+function renderInvAccountCard(acc) {
+  const color   = acc.color || '#3B82F6';
+  const darker  = darkenHex(color);
+  const initials = invAccountInitials(acc.name);
+  return `
+    <div style="
+      border-radius:16px;padding:18px 20px;
+      background:linear-gradient(145deg,${color} 0%,${darker} 100%);
+      color:white;min-height:150px;display:flex;flex-direction:column;
+      justify-content:space-between;position:relative;overflow:hidden;
+      box-shadow:0 3px 16px ${color}35;
+    ">
+      <div style="position:absolute;top:-30px;right:-30px;width:110px;height:110px;border-radius:50%;background:rgba(255,255,255,.07);pointer-events:none;"></div>
+      <div style="position:absolute;bottom:-20px;left:10px;width:80px;height:80px;border-radius:50%;background:rgba(255,255,255,.05);pointer-events:none;"></div>
+
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;position:relative;z-index:1;">
+        <div>
+          <div style="font-size:var(--font-size-sm);font-weight:700;letter-spacing:-.2px;">${escapeHtml(acc.name)}</div>
+          <div style="font-size:10px;opacity:.7;margin-top:2px;">Conta Investimento</div>
+        </div>
+        <div style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.2);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:11px;">${initials}</div>
+      </div>
+
+      <div style="position:relative;z-index:1;">
+        <div style="font-size:9px;opacity:.6;letter-spacing:.7px;text-transform:uppercase;margin-bottom:3px;">Saldo Aplicado</div>
+        <div style="font-size:var(--font-size-xl);font-weight:700;letter-spacing:-.3px;">${formatCurrency(acc.effectiveBalance ?? 0)}</div>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;position:relative;z-index:1;margin-top:6px;padding-top:10px;border-top:1px solid rgba(255,255,255,.12);">
+        <button class="inv-acc-move-btn" data-id="${acc.id}"
+          style="background:rgba(255,255,255,.18);border:none;border-radius:8px;padding:4px 10px;color:white;cursor:pointer;font-size:var(--font-size-xs);font-weight:600;">
+          + Movimentar
+        </button>
+        <div style="display:flex;gap:4px;">
+          <button class="inv-acc-edit-btn" data-id="${acc.id}"
+            style="background:rgba(255,255,255,.12);border:none;border-radius:8px;padding:4px 8px;color:rgba(255,255,255,.8);cursor:pointer;font-size:var(--font-size-xs);">
+            Editar
+          </button>
+          <button class="inv-acc-del-btn" data-id="${acc.id}" data-name="${escapeHtml(acc.name)}"
+            style="background:rgba(0,0,0,.18);border:none;border-radius:8px;padding:4px 8px;color:rgba(255,255,255,.6);cursor:pointer;font-size:var(--font-size-xs);">
+            ✕
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function openInvAccountModal(acc) {
+  const isEdit = !!acc;
+  const selectedColor = acc?.color || '#3B82F6';
+  openModal(
+    isEdit ? `Editar — ${escapeHtml(acc.name)}` : 'Adicionar Conta de Investimento',
+    `<div style="display:flex;flex-direction:column;gap:var(--space-4);">
+      <div class="form-group">
+        <label class="form-label">Corretora / Plataforma</label>
+        <select id="inv-acc-preset" class="form-input">
+          <option value="">— Preencher automaticamente —</option>
+          ${INV_ACCOUNT_PRESETS.map(p => `<option value="${p.name}" data-color="${p.color}">${p.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nome *</label>
+        <input type="text" id="inv-acc-name" class="form-input" placeholder="Ex: XP Investimentos" value="${escapeHtml(acc?.name || '')}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Saldo inicial (R$)</label>
+        <input type="number" id="inv-acc-balance" class="form-input" placeholder="0,00" step="0.01" min="0" value="${acc?.initialBalance ?? ''}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cor</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+          ${INV_ACCOUNT_COLORS.map(c => `
+            <button type="button" class="inv-acc-color-btn" data-color="${c}"
+              style="width:26px;height:26px;border-radius:50%;background:${c};border:3px solid ${selectedColor===c?'var(--color-gray-800)':'transparent'};cursor:pointer;flex-shrink:0;"></button>
+          `).join('')}
+        </div>
+        <input type="hidden" id="inv-acc-color" value="${selectedColor}">
+      </div>
+    </div>`,
+    `<button type="button" class="btn btn-secondary" id="modal-cancel">Cancelar</button>
+     <button type="button" class="btn btn-primary" id="inv-acc-save">${isEdit ? 'Salvar' : 'Adicionar'}</button>`
+  );
+
+  document.getElementById('inv-acc-preset').addEventListener('change', e => {
+    const preset = INV_ACCOUNT_PRESETS.find(p => p.name === e.target.value);
+    if (!preset) return;
+    document.getElementById('inv-acc-name').value = preset.name;
+    document.getElementById('inv-acc-color').value = preset.color;
+    document.querySelectorAll('.inv-acc-color-btn').forEach(b => {
+      b.style.borderColor = b.dataset.color === preset.color ? 'var(--color-gray-800)' : 'transparent';
+    });
+  });
+
+  document.querySelectorAll('.inv-acc-color-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('inv-acc-color').value = btn.dataset.color;
+      document.querySelectorAll('.inv-acc-color-btn').forEach(b => {
+        b.style.borderColor = b.dataset.color === btn.dataset.color ? 'var(--color-gray-800)' : 'transparent';
+      });
+    });
+  });
+
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.getElementById('inv-acc-save').addEventListener('click', () => {
+    const name = document.getElementById('inv-acc-name').value.trim();
+    if (!name) { showToast('Informe o nome da conta.', 'error'); return; }
+    const data = {
+      name,
+      initialBalance: parseFloat(document.getElementById('inv-acc-balance').value) || 0,
+      color: document.getElementById('inv-acc-color').value,
+    };
+    if (isEdit) { updateInvAccount(acc.id, data); showToast('Conta atualizada!', 'success'); }
+    else        { addInvAccount(data);             showToast('Conta adicionada!', 'success'); }
+    closeModal();
+    renderTabContent('carteira');
+  });
+}
+
+function openInvAccountMovementModal(acc) {
+  const today = new Date().toISOString().split('T')[0];
+  openModal(
+    `Movimentar — ${escapeHtml(acc.name)}`,
+    `<div style="display:flex;flex-direction:column;gap:var(--space-4);">
+      <div class="form-group">
+        <label class="form-label">Tipo *</label>
+        <div style="display:flex;gap:var(--space-3);">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;padding:10px;border:2px solid var(--color-gray-200);border-radius:8px;transition:border-color .15s;" id="lbl-aplicacao">
+            <input type="radio" name="inv-mov-type" value="aplicacao" checked style="accent-color:#10B981;">
+            <div>
+              <div style="font-weight:600;font-size:var(--font-size-sm);color:#10B981;">Aplicação</div>
+              <div style="font-size:11px;color:var(--color-gray-400);">Saldo aumenta</div>
+            </div>
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;flex:1;padding:10px;border:2px solid var(--color-gray-200);border-radius:8px;transition:border-color .15s;" id="lbl-resgate">
+            <input type="radio" name="inv-mov-type" value="resgate" style="accent-color:#EF4444;">
+            <div>
+              <div style="font-weight:600;font-size:var(--font-size-sm);color:#EF4444;">Resgate</div>
+              <div style="font-size:11px;color:var(--color-gray-400);">Saldo diminui</div>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Valor (R$) *</label>
+        <input type="number" id="inv-mov-amount" class="form-input" placeholder="0,00" step="0.01" min="0.01">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Data</label>
+        <input type="date" id="inv-mov-date" class="form-input" value="${today}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Descrição <span style="color:var(--color-gray-400);font-weight:normal;">(opcional)</span></label>
+        <input type="text" id="inv-mov-desc" class="form-input" placeholder="Ex: Aporte mensal">
+      </div>
+    </div>`,
+    `<button type="button" class="btn btn-secondary" id="modal-cancel">Cancelar</button>
+     <button type="button" class="btn btn-primary" id="inv-mov-save">Confirmar</button>`
+  );
+
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.getElementById('inv-mov-save').addEventListener('click', () => {
+    const type   = document.querySelector('input[name="inv-mov-type"]:checked')?.value;
+    const amount = parseFloat(document.getElementById('inv-mov-amount').value);
+    if (!amount || amount <= 0) { showToast('Informe um valor válido.', 'error'); return; }
+    addInvAccountMovement({
+      accountId:   acc.id,
+      type,
+      amount,
+      date:        document.getElementById('inv-mov-date').value,
+      description: document.getElementById('inv-mov-desc').value.trim(),
+    });
+    showToast(type === 'aplicacao' ? 'Aplicação registrada!' : 'Resgate registrado!', 'success');
+    closeModal();
+    renderTabContent('carteira');
+  });
+}
+
+function bindInvAccountEvents() {
+  const accounts = getInvAccounts();
+  const allMovements = getInvAccountMovements();
+
+  document.getElementById('btn-add-inv-account')?.addEventListener('click', () => openInvAccountModal(null));
+
+  document.querySelectorAll('.inv-acc-edit-btn').forEach(btn => {
+    const acc = accounts.find(a => a.id === btn.dataset.id);
+    if (acc) btn.addEventListener('click', () => openInvAccountModal(acc));
+  });
+
+  document.querySelectorAll('.inv-acc-move-btn').forEach(btn => {
+    const mvs = allMovements.filter(m => m.accountId === btn.dataset.id);
+    const aplicacoes = mvs.filter(m => m.type === 'aplicacao').reduce((s,m) => s + m.amount, 0);
+    const resgates   = mvs.filter(m => m.type === 'resgate').reduce((s,m) => s + m.amount, 0);
+    const acc = accounts.find(a => a.id === btn.dataset.id);
+    if (acc) btn.addEventListener('click', () => openInvAccountMovementModal({
+      ...acc, effectiveBalance: (acc.initialBalance || 0) + aplicacoes - resgates,
+    }));
+  });
+
+  document.querySelectorAll('.inv-acc-del-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm(`Excluir "${btn.dataset.name}"? Todos os movimentos desta conta serão removidos.`)) {
+        deleteInvAccount(btn.dataset.id);
+        showToast('Conta removida.', 'success');
+        renderTabContent('carteira');
+      }
+    });
+  });
+}
 
 // ── Tesouro Direto ──
 
@@ -551,6 +795,17 @@ function renderCarteiraTab(rf, rv, td, redemptions, rates = {}, amortConfirms = 
 
   const totalInvs = rf.length + td.length + rv.length + (getInvestmentsFunds ? getInvestmentsFunds().length : 0);
 
+  // Investment accounts
+  const invAccounts     = getInvAccounts();
+  const allInvMovements = getInvAccountMovements();
+  const invAccountsWithBalance = invAccounts.map(acc => {
+    const mvs       = allInvMovements.filter(m => m.accountId === acc.id);
+    const aplicacoes = mvs.filter(m => m.type === 'aplicacao').reduce((s,m) => s + m.amount, 0);
+    const resgates   = mvs.filter(m => m.type === 'resgate').reduce((s,m) => s + m.amount, 0);
+    return { ...acc, effectiveBalance: (acc.initialBalance || 0) + aplicacoes - resgates, aplicacoes, resgates };
+  });
+  const totalInvAccountBalance = invAccountsWithBalance.reduce((s,a) => s + a.effectiveBalance, 0);
+
   return `
     <div class="animate-fade-in-up">
       <div class="inv-total-card">
@@ -776,6 +1031,7 @@ function renderCarteiraTab(rf, rv, td, redemptions, rates = {}, amortConfirms = 
         </div>
       </div>
     </div>
+
   `;
 }
 
@@ -793,6 +1049,7 @@ function bindCarteiraFilterEvents(rf, rv, td, redemptions) {
   searchEl.addEventListener('input', (e) => { _carteiraSearch = e.target.value; rerender(); });
   sortEl.addEventListener('change',  (e) => { _carteiraSort   = e.target.value; rerender(); });
   document.getElementById('btn-edit-target')?.addEventListener('click', openTargetAllocModal);
+  bindInvAccountEvents();
 }
 
 function buildCarteiraCharts(rf, rv, td, redemptions = []) {
